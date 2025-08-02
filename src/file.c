@@ -14,7 +14,7 @@
 int file_open(String path, File *handle, int *size)
 {
     char zt[1<<10];
-    if (path.len >= (int) sizeof(zt))
+    if (path.len >= COUNT(zt))
         return -1;
     memcpy(zt, path.ptr, path.len);
     zt[path.len] = '\0';

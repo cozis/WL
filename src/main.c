@@ -15,9 +15,9 @@ int main(void)
 
     char err[1<<9];
     char mem[1<<14];
-    Arena a = { mem, (int) sizeof(mem), 0 };
+    Arena a = { mem, COUNT(mem), 0 };
 
-    ParseResult result = parse(src, &a, err, (int) sizeof(err));
+    ParseResult result = parse(src, &a, err, COUNT(err));
     if (result.node == NULL) {
         printf("%.*s\n", result.errlen, err);
         return -1;

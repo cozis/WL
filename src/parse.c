@@ -837,7 +837,7 @@ Node *parse_atom(Parser *p)
         default:
         {
             char buf[1<<8];
-            String str = tok2str(t, buf, (int) sizeof(buf));
+            String str = tok2str(t, buf, COUNT(buf));
             report(p, "Invalid token \'%.*s\' inside expression", str.len, str.ptr);
         }
         return NULL;

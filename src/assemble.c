@@ -1,3 +1,8 @@
+#include <stdio.h>
+#include <stdarg.h>
+#include <stdlib.h>
+#include <string.h>
+
 #include "parse.h"
 #include "assemble.h"
 
@@ -54,7 +59,33 @@ typedef struct {
     int strings_cap;
     char *strings;
 
+    char *errbuf;
+    int   errmax;
+    int   errlen;
+
 } Assembler;
+
+void assembler_report(Assembler *a, char *fmt, ...)
+{
+    if (a->errmax == 0 || a->errlen > 0)
+        return;
+
+    int len = snprintf(a->errbuf, a->errmax, "Error: ");
+    if (len < 0) {
+        // TODO
+    }
+
+    va_list args;
+    va_start(args, fmt);
+    int ret = vsnprintf(a->errbuf + len, a->errmax - len, fmt, args);
+    va_end(args);
+    if (ret < 0) {
+        // TODO
+    }
+    len += ret;
+
+    a->errlen = len;
+}
 
 int add_string_literal(Assembler *a, String str)
 {
@@ -62,7 +93,8 @@ int add_string_literal(Assembler *a, String str)
         int c = MAX(2 * a->strings_cap, a->strings_len + str.len);
         char *p = malloc(c);
         if (p == NULL) {
-            // TODO
+            assembler_report(a, "Out of memory");
+            return -1;
         }
         if (a->strings_cap) {
             memcpy(p, a->strings, a->strings_len);
@@ -129,6 +161,13 @@ int append_u32(OutputBuffer *out, uint32_t x)
     return off;
 }
 
+int append_u64(OutputBuffer *out, uint64_t x)
+{
+    int off = out->len;
+    append_mem(out, &x, (int) sizeof(x));
+    return off;
+}
+
 int append_f64(OutputBuffer *out, double x)
 {
     int off = out->len;
@@ -142,6 +181,11 @@ void patch_with_current_offset(OutputBuffer *out, int off)
     patch_mem(out, off, &x, (int) sizeof(x));
 }
 
+int current_offset(OutputBuffer *out)
+{
+    return out->len;
+}
+
 int count_nodes(Node *head)
 {
     int n = 0;
@@ -153,16 +197,36 @@ int count_nodes(Node *head)
     return n;
 }
 
-int declare_var(Assembler *a, String name)
+int find_variable(Assembler *a, String name)
 {
-    if (a->num_vars == MAX_VARS)
-        return -1;
-    // TODO: check if the variable exists already
-    int idx = a->num_vars++;
-    a->vars[idx] = (Variable) { name };
-    return idx - a->scopes[a->num_scopes-1].var_base;
+    Scope *scope = &a->scopes[a->num_scopes-1];
+    for (int i = scope->var_base; i < a->num_vars; i++)
+        if (streq(name, a->vars[i].name))
+            return i;
+    assembler_report(a, "Undeclared variable '%.*s'", name.len, name.ptr);
+    return -1;
 }
 
+int declare_var(Assembler *a, String name)
+{
+    if (a->num_vars == MAX_VARS) {
+        assembler_report(a, "Variable limit reached");
+        return -1;
+    }
+
+    Scope *scope = &a->scopes[a->num_scopes-1];
+    for (int i = scope->var_base; i < a->num_vars; i++)
+        if (streq(name, a->vars[i].name)) {
+            assembler_report(a, "Variable '%.*s' declared twice", name.len, name.ptr);
+            return -1;
+        }
+
+    int idx = a->num_vars++;
+    a->vars[idx] = (Variable) { name };
+    return idx - scope->var_base;
+}
+
+/*
 void assemble_html_node_inner(Assembler *a, Node *node, OutputBuffer *tmp)
 {
     append_u8(tmp, '<');
@@ -197,6 +261,41 @@ void assemble_html_node(Assembler *a, Node *node)
     OutputBuffer tmp;
     assemble_html_node_inner(a, node, &tmp);
 }
+*/
+
+b32 is_expr(Node *node)
+{
+    switch (node->type) {
+
+        default:
+        break;
+
+        case NODE_SELECT:
+        case NODE_FUNC_CALL:
+        case NODE_OPER_POS:
+        case NODE_OPER_NEG:
+        case NODE_OPER_ASS:
+        case NODE_OPER_EQL:
+        case NODE_OPER_NQL:
+        case NODE_OPER_LSS:
+        case NODE_OPER_GRT:
+        case NODE_OPER_ADD:
+        case NODE_OPER_SUB:
+        case NODE_OPER_MUL:
+        case NODE_OPER_DIV:
+        case NODE_OPER_MOD:
+        case NODE_VALUE_INT:
+        case NODE_VALUE_FLOAT:
+        case NODE_VALUE_STR:
+        case NODE_VALUE_VAR:
+        case NODE_VALUE_HTML:
+        case NODE_VALUE_ARRAY:
+        case NODE_VALUE_MAP:
+        return true;
+    }
+
+    return false;
+}
 
 void assemble_node(Assembler *a, Node *node)
 {
@@ -213,14 +312,15 @@ void assemble_node(Assembler *a, Node *node)
 
             Node *args[32];
             if (arg_count > COUNT(args)) {
-                // TODO
+                assembler_report(a, "Argument limit reached");
+                return;
             }
 
             for (int i = arg_count-1; i >= 0; i--) {
+
                 int idx = declare_var(a, args[i]->sval);
-                if (idx < 0) {
-                    // TODO
-                }
+                if (idx < 0) return;
+
                 append_u8(&a->out, OPCODE_SETV);
                 append_u8(&a->out, idx);
             }
@@ -256,7 +356,8 @@ void assemble_node(Assembler *a, Node *node)
 
                 FunctionCall *call = alloc(a->a, sizeof(FunctionCall), _Alignof(FunctionCall));
                 if (call == NULL) {
-                    // TODO
+                    assembler_report(a, "Out of memory");
+                    return;
                 }
                 call->name = func->sval;
                 call->off = p;
@@ -278,9 +379,7 @@ void assemble_node(Assembler *a, Node *node)
         case NODE_VAR_DECL:
         {
             int idx = declare_var(a, node->var_name);
-            if (idx < 0) {
-                // TODO
-            }
+            if (idx < 0) return;
 
             if (node->var_value) {
                 assemble_node(a, node->var_value);
@@ -375,7 +474,7 @@ void assemble_node(Assembler *a, Node *node)
             assemble_node(a, node->left);
 
             append_u8(&a->out, OPCODE_JUMP);
-            opcode_u32(&a->out, start);
+            append_u32(&a->out, start);
 
             patch_with_current_offset(&a->out, p);
         }
@@ -476,7 +575,8 @@ void assemble_node(Assembler *a, Node *node)
         break;
 
         case NODE_VALUE_HTML:
-        assemble_html_node(a, node);
+        // TODO
+        //assemble_html_node(a, node);
         break;
 
         case NODE_VALUE_ARRAY:
@@ -526,10 +626,8 @@ void assemble_node(Assembler *a, Node *node)
 
             if (dst->type == NODE_VALUE_VAR) {
 
-                int idx = find_variable(dst->sval);
-                if (idx < 0) {
-                    // TODO
-                }
+                int idx = find_variable(a, dst->sval);
+                if (idx < 0) return;
 
                 assemble_node(a, src);
                 append_u8(&a->out, OPCODE_SETV);
@@ -544,18 +642,25 @@ void assemble_node(Assembler *a, Node *node)
 
             } else {
 
-                // TODO ERROR
+                assembler_report(a, "Assignment left side can't be assigned to");
+                return;
             }
         }
+        break;
+
+        default:
         break;
     }
 }
 
-AssembleResult assemble(Node *root)
+AssembleResult assemble(Node *root, char *errbuf, int errmax)
 {
-    Assembler a = {0};
+    Assembler a = {0, .errbuf=errbuf, .errmax=errmax, .errlen=0};
     assemble_node(&a, root);
     append_u8(&a.out, OPCODE_NOPE);
 
+    Program p;
     // TODO
+
+    return (AssembleResult) { p, a.errlen };
 }

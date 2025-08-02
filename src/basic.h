@@ -25,6 +25,9 @@ typedef struct {
 #define S(X) (String) { (X), (int) sizeof(X)-1 }
 
 #define MIN(X, Y) ((X) < (Y) ? (X) : (Y))
+#define MAX(X, Y) ((X) > (Y) ? (X) : (Y))
+
+#define COUNT(X) (int) (sizeof(X) / sizeof((X)[0]))
 
 b32  is_space(char c);
 b32  is_digit(char c);

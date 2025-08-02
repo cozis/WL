@@ -41,8 +41,9 @@ typedef struct {
 
 typedef struct {
     Program program;
+    int errlen;
 } AssembleResult;
 
-AssembleResult assemble(Node *root);
+AssembleResult assemble(Node *root, char *errbuf, int errmax);
 
 #endif // WL_ASSEMBLE_INCLUDED
