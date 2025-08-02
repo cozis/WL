@@ -23,14 +23,14 @@ posts = [
 ];
 
 fun render_comment(c)
-    return <div class="comment">
+    <div class="comment">
         <a>$c.author; ($c.date;)</a>
         <p>$c.content;</p>
         <div class="comment-children">
         $for child in c.children:
             render_comment(child);
         </div>
-    </div>;
+    </div>
 
 <html>
     <head>
