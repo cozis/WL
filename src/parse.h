@@ -8,6 +8,7 @@ typedef enum {
     NODE_FUNC_DECL,
     NODE_FUNC_ARG,
     NODE_FUNC_CALL,
+    NODE_VAR_DECL,
     NODE_BLOCK,
     NODE_IFELSE,
     NODE_FOR,
@@ -65,6 +66,9 @@ struct Node {
     String func_name;
     Node  *func_args;
     Node  *func_body;
+
+    String var_name;
+    Node  *var_value;
 };
 
 typedef struct {

@@ -1,6 +1,4 @@
 
-func(1, 3, 5);
-
 title = "My Website";
 
 posts = [
@@ -27,22 +25,21 @@ fun render_comment(c)
         <a>$c.author; ($c.date;)</a>
         <p>$c.content;</p>
         <div class="comment-children">
-        $for child in c.children:
+        $ for child in c.children:
             render_comment(child);
         </div>
     </div>
 
-<html>
+export <html>
     <head>
-        <title>$(title);</title>
+        <title>$title;</title>
     </head>
     <body>
-    $for post in posts: {
+    $ for post in posts: {
         <div class="post">
             <a>$post.title; ($post.date;)</a>
-            $for comment in post.comments: {
+            $ for comment in post.comments:
                 render_comment(comment);
-            }
         </div>
     }
     </body>

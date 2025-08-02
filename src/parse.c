@@ -20,6 +20,7 @@ typedef enum {
     TOKEN_KWORD_FOR,
     TOKEN_KWORD_IN,
     TOKEN_KWORD_FUN,
+    TOKEN_KWORD_LET,
     TOKEN_VALUE_FLOAT,
     TOKEN_VALUE_INT,
     TOKEN_VALUE_STR,
@@ -102,6 +103,7 @@ String tok2str(Token token, char *buf, int max)
         case TOKEN_KWORD_FOR: return S("for");
         case TOKEN_KWORD_IN: return S("in");
         case TOKEN_KWORD_FUN: return S("fun");
+        case TOKEN_KWORD_LET: return S("let");
 
         case TOKEN_VALUE_FLOAT:
         {
@@ -221,6 +223,7 @@ Token next_token(Parser *p)
         if (streq(kword, S("for")))   return (Token) { .type=TOKEN_KWORD_FOR };
         if (streq(kword, S("in")))    return (Token) { .type=TOKEN_KWORD_IN };
         if (streq(kword, S("fun")))   return (Token) { .type=TOKEN_KWORD_FUN };
+        if (streq(kword, S("let")))   return (Token) { .type=TOKEN_KWORD_LET };
         return (Token) { .type=TOKEN_IDENT, .sval=kword };
     }
 
@@ -1299,6 +1302,49 @@ Node *parse_func_decl(Parser *p, int opflags)
     return parent;
 }
 
+Node *parse_var_decl(Parser *p, int opflags)
+{
+    Token t = next_token(p);
+    if (t.type != TOKEN_KWORD_LET) {
+        report(p, "Missing keyword 'let' at the start of a variable declaration");
+        return NULL;
+    }
+
+    t = next_token(p);
+    if (t.type != TOKEN_IDENT) {
+        report(p, "Missing variable name after 'let' keyword");
+        return NULL;
+    }
+    String name = t.sval;
+
+    t = next_token(p);
+
+    Node *value = NULL;
+    if (t.type == TOKEN_OPER_ASS) {
+
+        value = parse_expr(p, opflags);
+        if (value == NULL)
+            return NULL;
+
+        t = next_token(p);
+    }
+
+    if (t.type != TOKEN_SEMICOLON) {
+        report(p, "Missing ';' at the end of a variable declaration");
+        return NULL;
+    }
+
+    Node *parent = alloc_node(p);
+    if (parent == NULL)
+        return NULL;
+
+    parent->type = NODE_VAR_DECL;
+    parent->var_name = name;
+    parent->var_value = value;
+
+    return parent;
+}
+
 Node *parse_stmt(Parser *p, int opflags)
 {
     Scanner saved = p->s;
@@ -1309,6 +1355,9 @@ Node *parse_stmt(Parser *p, int opflags)
 
         case TOKEN_KWORD_FUN:
         return parse_func_decl(p, opflags);
+
+        case TOKEN_KWORD_LET:
+        return parse_var_decl(p, opflags);
 
         case TOKEN_KWORD_IF:
         return parse_ifelse_stmt(p, opflags);
@@ -1609,6 +1658,19 @@ void print_node(Node *node)
                     printf(", ");
             }
             printf(")");
+        }
+        break;
+
+        case NODE_VAR_DECL:
+        {
+            printf("let %.*s",
+                node->var_name.len,
+                node->var_name.ptr);
+            if (node->var_value) {
+                printf(" = ");
+                print_node(node);
+            }
+            printf(";");
         }
         break;
     }
