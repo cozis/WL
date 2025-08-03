@@ -1,5 +1,4 @@
-
-title = "My Website";
+title = "My Website"
 
 posts = [
     {
@@ -18,29 +17,28 @@ posts = [
             { author: "User 2", date: "2 Jan 2025", content: "Second comment" },
         ]
     },
-];
+]
 
 fun render_comment(c)
     <div class="comment">
-        <a>$c.author; ($c.date;)</a>
-        <p>$c.content;</p>
+        <a>\{c.author} (\c.date)</a>
+        <p>\c.content</p>
         <div class="comment-children">
-        $ for child in c.children:
-            render_comment(child);
+        \for child in c.children:
+            render_comment(child)
         </div>
     </div>
 
-export <html>
+<html>
     <head>
-        <title>$title;</title>
+        <title>\title</title>
     </head>
     <body>
-    $ for post in posts: {
+    \for post in posts:
         <div class="post">
-            <a>$post.title; ($post.date;)</a>
-            $ for comment in post.comments:
-                render_comment(comment);
+            <a>\{post.title} (\post.date)</a>
+            \for comment in post.comments:
+                render_comment(comment)
         </div>
-    }
     </body>
 </html>

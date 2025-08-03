@@ -2,7 +2,9 @@
 #include <stdarg.h>
 #include <string.h>
 
+#ifndef WL_AMALGAMATION
 #include "parse.h"
+#endif
 
 typedef struct {
     char *src;
@@ -43,7 +45,7 @@ typedef enum {
     TOKEN_DOT,
     TOKEN_COMMA,
     TOKEN_COLON,
-    TOKEN_SEMICOLON,
+    TOKEN_NEWLINE,
 } TokType;
 
 typedef struct {
@@ -149,7 +151,8 @@ String tok2str(Token token, char *buf, int max)
         case TOKEN_DOT: return S(".");
         case TOKEN_COMMA: return S(",");
         case TOKEN_COLON: return S(":");
-        case TOKEN_SEMICOLON: return S(";");
+
+        case TOKEN_NEWLINE: return S("\\n");
     }
 
     return S("???");
@@ -378,10 +381,23 @@ Token next_token(Parser *p)
     if (consume_str(&p->s, S(".")))  return (Token) { .type=TOKEN_DOT };
     if (consume_str(&p->s, S(",")))  return (Token) { .type=TOKEN_COMMA };
     if (consume_str(&p->s, S(":")))  return (Token) { .type=TOKEN_COLON };
-    if (consume_str(&p->s, S(";")))  return (Token) { .type=TOKEN_SEMICOLON };
 
     report(p, "Invalid character '%c'", c);
     return (Token) { .type=TOKEN_ERROR };
+}
+
+Token next_token_or_newline(Parser *p)
+{
+    int peek = p->s.cur;
+    while (peek < p->s.len && is_space(p->s.src[peek]) && p->s.src[peek] != '\n')
+        peek++;
+
+    if (peek < p->s.len && p->s.src[peek] == '\n') {
+        p->s.cur = peek+1;
+        return (Token) { .type=TOKEN_NEWLINE };
+    }
+
+    return next_token(p);
 }
 
 enum {
@@ -398,7 +414,9 @@ Node *parse_html(Parser *p)
 
     Token t = next_token(p);
     if (t.type != TOKEN_IDENT) {
-        report(p, "HTML tag doesn't start with a name");
+        char buf[1<<8];
+        String ts = tok2str(t, buf, COUNT(buf));
+        report(p, "HTML tag doesn't start with a name (got '%.*s' instead)", ts.len, ts.ptr);
         return NULL;
     }
     String tagname = t.sval;
@@ -455,7 +473,7 @@ Node *parse_html(Parser *p)
         for (;;) {
 
             int off = p->s.cur;
-            while (p->s.cur < p->s.len && p->s.src[p->s.cur] != '<' && p->s.src[p->s.cur] != '$')
+            while (p->s.cur < p->s.len && p->s.src[p->s.cur] != '<' && p->s.src[p->s.cur] != '\\')
                 p->s.cur++;
 
             if (p->s.cur > off) {
@@ -474,7 +492,7 @@ Node *parse_html(Parser *p)
             if (p->s.cur == p->s.len || p->s.src[p->s.cur] == '<')
                 break;
 
-            p->s.cur++; // Consume $
+            p->s.cur++; // Consume \ 
 
             {
                 Node *child = parse_stmt(p, IGNORE_LSS);
@@ -950,7 +968,7 @@ Node *parse_expr_inner(Parser *p, Node *left, int min_prec, int flags)
     for (;;) {
 
         Scanner saved = p->s;
-        Token t1 = next_token(p);
+        Token t1 = next_token_or_newline(p);
         if (precedence(t1, flags) < min_prec) {
             p->s = saved;
            break;
@@ -963,7 +981,7 @@ Node *parse_expr_inner(Parser *p, Node *left, int min_prec, int flags)
         for (;;) {
 
             saved = p->s;
-            Token t2 = next_token(p);
+            Token t2 = next_token_or_newline(p);
             int p1 = precedence(t1, flags);
             int p2 = precedence(t2, flags);
             p->s = saved;
@@ -1022,14 +1040,6 @@ Node *parse_expr_stmt(Parser *p, int opflags)
     Node *e = parse_expr(p, opflags);
     if (e == NULL)
         return NULL;
-
-    if (e->type != NODE_VALUE_HTML) {
-        Token t = next_token(p);
-        if (t.type != TOKEN_SEMICOLON) {
-            report(p, "Missing ';' after expression");
-            return NULL;
-        }
-    }
 
     return e;
 }
@@ -1317,21 +1327,19 @@ Node *parse_var_decl(Parser *p, int opflags)
     }
     String name = t.sval;
 
+    Scanner saved = p->s;
     t = next_token(p);
 
-    Node *value = NULL;
+    Node *value;
     if (t.type == TOKEN_OPER_ASS) {
 
         value = parse_expr(p, opflags);
         if (value == NULL)
             return NULL;
 
-        t = next_token(p);
-    }
-
-    if (t.type != TOKEN_SEMICOLON) {
-        report(p, "Missing ';' at the end of a variable declaration");
-        return NULL;
+    } else {
+        p->s = saved;
+        value = NULL;
     }
 
     Node *parent = alloc_node(p);
@@ -1630,8 +1638,8 @@ void print_node(Node *node)
                 node->func_name.ptr);
             Node *arg = node->func_args;
             while (arg) {
-                arg = arg->next;
                 print_node(arg);
+                arg = arg->next;
                 if (arg)
                     printf(", ");
             }

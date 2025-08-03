@@ -1,7 +1,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifndef WL_AMALGAMATION
 #include "basic.h"
+#endif
 
 b32 is_space(char c)
 {

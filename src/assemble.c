@@ -3,8 +3,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef WL_AMALGAMATION
 #include "parse.h"
 #include "assemble.h"
+#endif
 
 #define MAX_SCOPES 32
 #define MAX_VARS   1024

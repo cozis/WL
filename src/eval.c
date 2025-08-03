@@ -1,4 +1,7 @@
+
+#ifndef WL_AMALGAMATION
 #include "eval.h"
+#endif
 
 #define FRAME_LIMIT 128
 #define EVAL_STACK_LIMIT 128

@@ -2,7 +2,10 @@
 #define WL_PARSE_INCLUDED
 
 #include <stdint.h>
+
+#ifndef WL_AMALGAMATION
 #include "basic.h"
+#endif
 
 typedef enum {
     NODE_FUNC_DECL,

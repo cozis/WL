@@ -1,7 +1,9 @@
 #ifndef WL_FILE_INCLUDED
 #define WL_FILE_INCLUDED
 
+#ifndef WL_AMALGAMATION
 #include "basic.h"
+#endif
 
 #if _WIN32
 #define WIN32_LEAN_AND_MEAN

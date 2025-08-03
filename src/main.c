@@ -14,8 +14,8 @@ int main(void)
     }
 
     char err[1<<9];
-    char mem[1<<14];
-    Arena a = { mem, COUNT(mem), 0 };
+    char *mem = malloc(1<<20);
+    Arena a = { mem, 1<<20, 0 };
 
     ParseResult result = parse(src, &a, err, COUNT(err));
     if (result.node == NULL) {
@@ -27,5 +27,6 @@ int main(void)
     fflush(stdout);
 
     free(src.ptr);
+    free(mem);
     return 0;
 }

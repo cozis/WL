@@ -9,7 +9,9 @@
 #include <sys/stat.h>
 #endif
 
+#ifndef WL_AMALGAMATION
 #include "file.h"
+#endif
 
 int file_open(String path, File *handle, int *size)
 {
