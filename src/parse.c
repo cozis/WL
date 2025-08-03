@@ -23,6 +23,7 @@ typedef enum {
     TOKEN_KWORD_IN,
     TOKEN_KWORD_FUN,
     TOKEN_KWORD_LET,
+    TOKEN_KWORD_PRINT,
     TOKEN_VALUE_FLOAT,
     TOKEN_VALUE_INT,
     TOKEN_VALUE_STR,
@@ -106,6 +107,7 @@ String tok2str(Token token, char *buf, int max)
         case TOKEN_KWORD_IN: return S("in");
         case TOKEN_KWORD_FUN: return S("fun");
         case TOKEN_KWORD_LET: return S("let");
+        case TOKEN_KWORD_PRINT: return S("print");
 
         case TOKEN_VALUE_FLOAT:
         {
@@ -227,6 +229,7 @@ Token next_token(Parser *p)
         if (streq(kword, S("in")))    return (Token) { .type=TOKEN_KWORD_IN };
         if (streq(kword, S("fun")))   return (Token) { .type=TOKEN_KWORD_FUN };
         if (streq(kword, S("let")))   return (Token) { .type=TOKEN_KWORD_LET };
+        if (streq(kword, S("print"))) return (Token) { .type=TOKEN_KWORD_PRINT };
         return (Token) { .type=TOKEN_IDENT, .sval=kword };
     }
 
@@ -1413,6 +1416,31 @@ Node *parse_var_decl(Parser *p, int opflags)
     return parent;
 }
 
+Node *parse_print_stmt(Parser *p, int opflags)
+{
+    int start = p->s.cur;
+
+    Token t = next_token(p);
+    if (t.type != TOKEN_KWORD_PRINT) {
+        parser_report(p, "Missing keyword 'print' at the start of a print statement");
+        return NULL;
+    }
+
+    Node *arg = parse_expr(p, opflags);
+    if (arg == NULL)
+        return NULL;
+
+    Node *parent = alloc_node(p);
+    if (parent == NULL)
+        return NULL;
+
+    parent->type = NODE_PRINT;
+    parent->text = (String) { p->s.src + start, p->s.cur - start };
+    parent->left = arg;
+
+    return parent;
+}
+
 Node *parse_stmt(Parser *p, int opflags)
 {
     Scanner saved = p->s;
@@ -1420,6 +1448,9 @@ Node *parse_stmt(Parser *p, int opflags)
     p->s = saved;
 
     switch (t.type) {
+
+        case TOKEN_KWORD_PRINT:
+        return parse_print_stmt(p, opflags);
 
         case TOKEN_KWORD_FUN:
         return parse_func_decl(p, opflags);

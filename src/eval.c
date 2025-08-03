@@ -141,7 +141,7 @@ Type type_of(Value v)
     // 001 true
     // 010 false
     // 011 int
-    // 100 string
+    // 100
     // 101
     // 110 error
     // 111 pointer
@@ -151,10 +151,10 @@ Type type_of(Value v)
         case 1: return TYPE_BOOL;
         case 2: return TYPE_BOOL;
         case 3: return TYPE_INT;
-        case 4: return TYPE_STRING;
+        case 4: break;
         case 5: break;
         case 6: return TYPE_ERROR;
-        case 7: return *(Type*) v;
+        case 7: return *(Type*) ((uintptr_t) v & ~(uintptr_t) 7);
     }
 
     return TYPE_ERROR;
@@ -175,12 +175,9 @@ float get_float(Value v)
     return p->raw;
 }
 
-String get_str(Value *v)
+String get_str(Value v)
 {
-    if ((*v & 7) == 6)
-        return (String) { (char*) v, strnlen((char*) v, 7) };
-
-    StringValue *p = (StringValue*) (*v & ~(uintptr_t) 7);
+    StringValue *p = (StringValue*) (v & ~(uintptr_t) 7);
     return (String) { p->data, p->len };
 }
 
@@ -197,7 +194,7 @@ ArrayValue *get_array(Value v)
 Value make_int(Eval *e, int64_t x)
 {
     if (x <= (int64_t) (1ULL << 60)-1 && x >= (int64_t) -(1ULL << 60))
-        return ((Value) x >> 3) | 3;
+        return ((Value) x << 3) | 3;
 
     IntValue *v = alloc(e->a, (int) sizeof(IntValue), _Alignof(IntValue));
     if (v == NULL) {
@@ -229,18 +226,13 @@ Value make_float(Eval *e, float x)
 
 Value make_str(Eval *e, String x)
 {
-    if (x.len < 8) {
-        Value v = 0;
-        memcpy(&v, x.ptr, x.len);
-        return v | 4;
-    }
-
-    StringValue *v = alloc(e->a, (int) sizeof(StringValue) + x.len, _Alignof(StringValue));
+    StringValue *v = alloc(e->a, (int) sizeof(StringValue) + x.len, 8);
     if (v == NULL) {
         eval_report(e, "Out of memory");
         return VALUE_ERROR;
     }
 
+    v->type = TYPE_STRING;
     v->len = x.len;
     memcpy(v->data, x.ptr, x.len);
 
@@ -399,7 +391,7 @@ b32 valeq(Value a, Value b)
         return false; // TODO
 
         case TYPE_STRING:
-        return streq(get_str(&a), get_str(&b));
+        return streq(get_str(a), get_str(b));
 
         case TYPE_ERROR:
         return true;
@@ -1078,6 +1070,24 @@ int step(Eval *e)
             }
 
             e->eval_stack[e->eval_depth++] = r;
+        }
+        break;
+
+        case OPCODE_PRINT:
+        {
+            Value v = e->eval_stack[e->eval_depth-1];
+
+            switch (type_of(v)) {
+                case TYPE_NONE  : printf("none"); break;
+                case TYPE_BOOL  : printf(v == VALUE_TRUE ? "true" : "false"); break;
+                case TYPE_INT   : printf("%" LLD, get_int(v)); break;
+                case TYPE_FLOAT : printf("%lf", get_float(v)); break;
+                case TYPE_MAP   : printf("map"); break;
+                case TYPE_ARRAY : printf("array"); break;
+                case TYPE_STRING: printf("%.*s", get_str(v).len, get_str(v).ptr); break;
+                case TYPE_ERROR : printf("error"); break;
+            }
+            fflush(stdout);
         }
         break;
 

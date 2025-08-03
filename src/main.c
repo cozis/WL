@@ -25,8 +25,8 @@ int main(void)
         return -1;
     }
 
-    print_node(parse_result.node);
-    printf("\n");
+    //print_node(parse_result.node);
+    //printf("\n");
 
     AssembleResult assemble_result = assemble(parse_result.node, &a, err, COUNT(err));
     if (assemble_result.errlen) {
@@ -34,7 +34,7 @@ int main(void)
         return -1;
     }
 
-    print_program(assemble_result.program);
+    //print_program(assemble_result.program);
 
     ret = eval(assemble_result.program, &a, err, COUNT(err));
     if (ret < 0) {

@@ -433,6 +433,14 @@ void assemble_node(Assembler *a, Node *node)
 {
     switch (node->type) {
 
+        case NODE_PRINT:
+        {
+            assemble_node(a, node->left);
+            append_u8(&a->out, OPCODE_PRINT);
+            append_u8(&a->out, OPCODE_POP);
+        }
+        break;
+
         case NODE_FUNC_DECL:
         {
             append_u8(&a->out, OPCODE_JUMP);
@@ -1129,6 +1137,10 @@ void print_program(Program p)
 
             case OPCODE_SELECT:
             printf("SELECT");
+            break;
+
+            case OPCODE_PRINT:
+            printf("PRINT");
             break;
         }
 

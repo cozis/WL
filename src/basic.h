@@ -18,8 +18,10 @@ typedef struct {
 
 #ifdef _WIN32
 #define LLU "llu"
+#define LLD "lld"
 #else
 #define LLU "lu"
+#define LLD "ld"
 #endif
 
 #define S(X) (String) { (X), (int) sizeof(X)-1 }

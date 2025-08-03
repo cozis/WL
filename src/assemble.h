@@ -34,6 +34,7 @@ enum {
     OPCODE_INSERT1 = 0x18,
     OPCODE_INSERT2 = 0x19,
     OPCODE_SELECT  = 0x20,
+    OPCODE_PRINT   = 0x24,
 };
 
 typedef struct {

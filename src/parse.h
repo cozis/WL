@@ -12,6 +12,7 @@ typedef enum {
     NODE_FUNC_ARG,
     NODE_FUNC_CALL,
     NODE_VAR_DECL,
+    NODE_PRINT,
     NODE_BLOCK,
     NODE_IFELSE,
     NODE_FOR,
