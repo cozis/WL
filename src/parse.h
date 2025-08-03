@@ -17,6 +17,7 @@ typedef enum {
     NODE_FOR,
     NODE_WHILE,
     NODE_SELECT,
+    NODE_NESTED,
     NODE_OPER_POS,
     NODE_OPER_NEG,
     NODE_OPER_ASS,
@@ -43,6 +44,7 @@ typedef struct Node Node;
 struct Node {
     NodeType type;
     Node *next;
+    String text;
 
     Node *key;
 

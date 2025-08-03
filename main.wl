@@ -1,6 +1,7 @@
-title = "My Website"
 
-posts = [
+let title = "My Website"
+
+let posts = [
     {
         name: "Post Title 1",
         date: "1 Jan 2025",
@@ -21,7 +22,7 @@ posts = [
 
 fun render_comment(c)
     <div class="comment">
-        <a>\{c.author} (\c.date)</a>
+        <a>\c.author (\c.date)</a>
         <p>\c.content</p>
         <div class="comment-children">
         \for child in c.children:
@@ -34,11 +35,12 @@ fun render_comment(c)
         <title>\title</title>
     </head>
     <body>
+    <a>This is regular text</a>
     \for post in posts:
         <div class="post">
-            <a>\{post.title} (\post.date)</a>
+            <a>\post.title (\post.date)</a>
             \for comment in post.comments:
-                render_comment(comment)
+                render_comment(comment) 
         </div>
     </body>
 </html>

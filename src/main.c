@@ -3,6 +3,7 @@
 
 #include "file.h"
 #include "parse.h"
+#include "assemble.h"
 
 int main(void)
 {
@@ -17,14 +18,24 @@ int main(void)
     char *mem = malloc(1<<20);
     Arena a = { mem, 1<<20, 0 };
 
-    ParseResult result = parse(src, &a, err, COUNT(err));
-    if (result.node == NULL) {
-        printf("%.*s\n", result.errlen, err);
+    ParseResult parse_result = parse(src, &a, err, COUNT(err));
+    if (parse_result.node == NULL) {
+        printf("%.*s\n", parse_result.errlen, err);
         return -1;
     }
 
-    print_node(result.node);
-    fflush(stdout);
+    print_node(parse_result.node);
+    printf("\n");
+
+    AssembleResult assemble_result = assemble(parse_result.node, &a, err, COUNT(err));
+    if (assemble_result.errlen) {
+        printf("%.*s\n", parse_result.errlen, err);
+        return -1;
+    }
+
+    print_program(assemble_result.program);
+
+    eval(assemble_result.program);
 
     free(src.ptr);
     free(mem);

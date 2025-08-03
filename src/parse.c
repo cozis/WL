@@ -158,7 +158,7 @@ String tok2str(Token token, char *buf, int max)
     return S("???");
 }
 
-void report(Parser *p, char *fmt, ...)
+void parser_report(Parser *p, char *fmt, ...)
 {
     if (p->errmax == 0 || p->errlen > 0)
         return;
@@ -192,7 +192,7 @@ Node *alloc_node(Parser *p)
 {
     Node *n = alloc(p->a, sizeof(Node), _Alignof(Node));
     if (n == NULL) {
-        report(p, "Out of memory");
+        parser_report(p, "Out of memory");
         return NULL;
     }
 
@@ -262,7 +262,7 @@ Token next_token(Parser *p)
             do {
                 int d = p->s.src[p->s.cur++] - '0';
                 if (buf > (UINT64_MAX - d) / 10) {
-                    report(p, "Integer literal overflow");
+                    parser_report(p, "Integer literal overflow");
                     return (Token) { .type=TOKEN_ERROR };
                 }
                 buf = buf * 10 + d;
@@ -296,7 +296,7 @@ Token next_token(Parser *p)
                     buf = NULL;
 
             if (buf == NULL) {
-                report(p, "Out of memory");
+                parser_report(p, "Out of memory");
                 return (Token) { .type=TOKEN_ERROR };
             }
 
@@ -310,12 +310,12 @@ Token next_token(Parser *p)
             }
 
             if (p->s.cur == p->s.len) {
-                report(p, "String literal wasn't closed");
+                parser_report(p, "String literal wasn't closed");
                 return (Token) { .type=TOKEN_ERROR };
             }
 
             if (!is_printable(p->s.src[p->s.cur])) {
-                report(p, "Invalid byte in string literal");
+                parser_report(p, "Invalid byte in string literal");
                 return (Token) { .type=TOKEN_ERROR };
             }
 
@@ -324,7 +324,7 @@ Token next_token(Parser *p)
 
             p->s.cur++;
             if (p->s.cur == p->s.len) {
-                report(p, "Missing special character after escape character \\");
+                parser_report(p, "Missing special character after escape character \\");
                 return (Token) { .type=TOKEN_ERROR };
             }
 
@@ -350,7 +350,7 @@ Token next_token(Parser *p)
                 break;
 
                 default:
-                report(p, "Invalid character after escape character \\");
+                parser_report(p, "Invalid character after escape character \\");
                 return (Token) { .type=TOKEN_ERROR };
             }
 
@@ -382,7 +382,7 @@ Token next_token(Parser *p)
     if (consume_str(&p->s, S(",")))  return (Token) { .type=TOKEN_COMMA };
     if (consume_str(&p->s, S(":")))  return (Token) { .type=TOKEN_COLON };
 
-    report(p, "Invalid character '%c'", c);
+    parser_report(p, "Invalid character '%c'", c);
     return (Token) { .type=TOKEN_ERROR };
 }
 
@@ -411,12 +411,14 @@ Node *parse_expr(Parser *p, int opflags);
 Node *parse_html(Parser *p)
 {
     // NOTE: The first < was already consumed
+    
+    int node_offset = p->s.cur-1;
 
     Token t = next_token(p);
     if (t.type != TOKEN_IDENT) {
         char buf[1<<8];
         String ts = tok2str(t, buf, COUNT(buf));
-        report(p, "HTML tag doesn't start with a name (got '%.*s' instead)", ts.len, ts.ptr);
+        parser_report(p, "HTML tag doesn't start with a name (got '%.*s' instead)", ts.len, ts.ptr);
         return NULL;
     }
     String tagname = t.sval;
@@ -426,6 +428,8 @@ Node *parse_html(Parser *p)
 
     for (;;) {
 
+        int param_offset = p->s.cur;
+
         String attr_name;
         Node  *attr_value;
 
@@ -433,7 +437,7 @@ Node *parse_html(Parser *p)
         if (t.type == TOKEN_OPER_GRT)
             break;
         if (t.type != TOKEN_IDENT) {
-            report(p, "Invalid token inside HTML tag");
+            parser_report(p, "Invalid token inside HTML tag");
             return NULL;
         }
         attr_name = t.sval;
@@ -456,6 +460,7 @@ Node *parse_html(Parser *p)
             return NULL;
 
         child->type = NODE_HTML_PARAM;
+        child->text = (String) { p->s.src + param_offset, p->s.cur - param_offset };
         child->attr_name  = attr_name;
         child->attr_value = attr_value;
 
@@ -483,6 +488,7 @@ Node *parse_html(Parser *p)
                     return NULL;
 
                 child->type = NODE_VALUE_STR;
+                child->text = (String) { p->s.src + off, p->s.cur - off };
                 child->sval = (String) { p->s.src + off, p->s.cur - off };
 
                 *tail = child;
@@ -492,7 +498,7 @@ Node *parse_html(Parser *p)
             if (p->s.cur == p->s.len || p->s.src[p->s.cur] == '<')
                 break;
 
-            p->s.cur++; // Consume \ 
+            p->s.cur++; // Consume "\"
 
             {
                 Node *child = parse_stmt(p, IGNORE_LSS);
@@ -505,7 +511,7 @@ Node *parse_html(Parser *p)
         }
 
         if (p->s.cur == p->s.len) {
-            report(p, "Missing closing HTML tag");
+            parser_report(p, "Missing closing HTML tag");
             return NULL;
         }
         p->s.cur++; // Consume <
@@ -517,7 +523,7 @@ Node *parse_html(Parser *p)
             if (t.type == TOKEN_IDENT && streqcase(t.sval, tagname)) {
                 t = next_token(p);
                 if (t.type != TOKEN_OPER_GRT) {
-                    report(p, "Unexpected token in closing HTML tag");
+                    parser_report(p, "Unexpected token in closing HTML tag");
                     return NULL;
                 }
                 break;
@@ -541,6 +547,7 @@ Node *parse_html(Parser *p)
         return NULL;
 
     parent->type = NODE_VALUE_HTML;
+    parent->text = (String) { p->s.src + node_offset, p->s.cur - node_offset };
     parent->tagname = tagname;
     parent->params = param_head;
     parent->child  = head;
@@ -551,6 +558,8 @@ Node *parse_html(Parser *p)
 Node *parse_array(Parser *p)
 {
     // Left bracket already consumed
+
+    int start = p->s.cur;
 
     Node *head;
     Node **tail = &head;
@@ -591,6 +600,7 @@ Node *parse_array(Parser *p)
         return NULL;
 
     parent->type = NODE_VALUE_ARRAY;
+    parent->text = (String) { p->s.src + start, p->s.cur - start };
     parent->child  = head;
 
     return parent;
@@ -599,6 +609,8 @@ Node *parse_array(Parser *p)
 Node *parse_map(Parser *p)
 {
     // Left bracket already consumed
+
+    int start = p->s.cur;
 
     Node *head;
     Node **tail = &head;
@@ -622,6 +634,7 @@ Node *parse_map(Parser *p)
                     return NULL;
 
                 key->type = NODE_VALUE_STR;
+                key->text = t.sval;
                 key->sval = t.sval;
 
             } else {
@@ -634,7 +647,7 @@ Node *parse_map(Parser *p)
 
             t = next_token(p);
             if (t.type != TOKEN_COLON) {
-                report(p, "Missing ':' after key inside map literal");
+                parser_report(p, "Missing ':' after key inside map literal");
                 return NULL;
             }
 
@@ -667,6 +680,7 @@ Node *parse_map(Parser *p)
         return NULL;
 
     parent->type = NODE_VALUE_MAP;
+    parent->text = (String) { p->s.src + start, p->s.cur - start };
     parent->child  = head;
 
     return parent;
@@ -716,6 +730,8 @@ b32 right_associative(Token t)
 
 Node *parse_atom(Parser *p)
 {
+    int start = p->s.cur;
+
     Token t = next_token(p);
 
     Node *ret;
@@ -731,6 +747,7 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             parent->type = NODE_OPER_POS;
+            parent->text = (String) { p->s.src + start, p->s.cur - start };
             parent->left = child;
 
             ret = parent;
@@ -748,6 +765,7 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             parent->type = NODE_OPER_NEG;
+            parent->text = (String) { p->s.src + start, p->s.cur - start };
             parent->left = child;
 
             ret = parent;
@@ -761,6 +779,7 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             node->type = NODE_VALUE_VAR;
+            node->text = (String) { p->s.src + start, p->s.cur - start };
             node->sval = t.sval;
 
             ret = node;
@@ -774,6 +793,7 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             node->type = NODE_VALUE_INT;
+            node->text = (String) { p->s.src + start, p->s.cur - start };
             node->ival = t.uval;
 
             ret = node;
@@ -787,6 +807,7 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             node->type = NODE_VALUE_FLOAT;
+            node->text = (String) { p->s.src + start, p->s.cur - start };
             node->dval = t.dval;
 
             ret = node;
@@ -800,6 +821,7 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             node->type = NODE_VALUE_STR;
+            node->text = (String) { p->s.src + start, p->s.cur - start };
             node->sval = t.sval;
 
             ret = node;
@@ -824,11 +846,19 @@ Node *parse_atom(Parser *p)
 
             Token t = next_token(p);
             if (t.type != TOKEN_PAREN_CLOSE) {
-                report(p, "Missing ')' after expression");
+                parser_report(p, "Missing ')' after expression");
                 return NULL;
             }
 
-            ret = node;
+            Node *parent = alloc_node(p);
+            if (parent == NULL)
+                return NULL;
+
+            parent->type = NODE_NESTED;
+            parent->text = (String) { p->s.src + start, p->s.cur - start };
+            parent->left = node;
+
+            ret = parent;
         }
         break;
 
@@ -856,7 +886,7 @@ Node *parse_atom(Parser *p)
         {
             char buf[1<<8];
             String str = tok2str(t, buf, COUNT(buf));
-            report(p, "Invalid token \'%.*s\' inside expression", str.len, str.ptr);
+            parser_report(p, "Invalid token \'%.*s\' inside expression", str.len, str.ptr);
         }
         return NULL;
     }
@@ -868,7 +898,7 @@ Node *parse_atom(Parser *p)
 
             t = next_token(p);
             if (t.type != TOKEN_IDENT) {
-                report(p, "Invalid token after '.' where an identifier was expected");
+                parser_report(p, "Invalid token after '.' where an identifier was expected");
                 return NULL;
             }
 
@@ -877,6 +907,7 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             child->type = NODE_VALUE_STR;
+            child->text = t.sval;
             child->sval = t.sval;
 
             Node *parent = alloc_node(p);
@@ -884,6 +915,7 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             parent->type = NODE_SELECT;
+            parent->text = (String) { p->s.src + start, p->s.cur - start };
             parent->left = ret;
             parent->right = child;
 
@@ -897,7 +929,7 @@ Node *parse_atom(Parser *p)
 
             t = next_token(p);
             if (t.type != TOKEN_BRACKET_CLOSE) {
-                report(p, "Missing token ']'");
+                parser_report(p, "Missing token ']'");
                 return NULL;
             }
 
@@ -906,12 +938,13 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             parent->type = NODE_SELECT;
+            parent->text = (String) { p->s.src + start, p->s.cur - start };
             parent->left = ret;
             parent->right = child;
 
             ret = parent;
 
-        } else if (t.type == TOKEN_PAREN_OPEN) {
+        } else if (t.type == TOKEN_PAREN_OPEN && ret->type == NODE_VALUE_VAR) {
 
             Node *arg_head;
             Node **arg_tail = &arg_head;
@@ -936,7 +969,7 @@ Node *parse_atom(Parser *p)
                         break;
 
                     if (t.type != TOKEN_COMMA) {
-                        report(p, "Expected ',' after argument in function call");
+                        parser_report(p, "Expected ',' after argument in function call");
                         return NULL;
                     }
                 }
@@ -949,6 +982,7 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             parent->type = NODE_FUNC_CALL;
+            parent->text = (String) { p->s.src + start, p->s.cur - start };
             parent->left = ret;
             parent->right = arg_head;
 
@@ -963,7 +997,7 @@ Node *parse_atom(Parser *p)
     return ret;
 }
 
-Node *parse_expr_inner(Parser *p, Node *left, int min_prec, int flags)
+Node *parse_expr_inner(Parser *p, Node *left, int min_prec, int start, int flags)
 {
     for (;;) {
 
@@ -973,6 +1007,8 @@ Node *parse_expr_inner(Parser *p, Node *left, int min_prec, int flags)
             p->s = saved;
            break;
         }
+
+        int right_start = p->s.cur;
 
         Node *right = parse_atom(p);
         if (right == NULL)
@@ -992,7 +1028,7 @@ Node *parse_expr_inner(Parser *p, Node *left, int min_prec, int flags)
             if (p2 <= p1 && (p1 != p2 || !right_associative(t2)))
                 break;
 
-            right = parse_expr_inner(p, right, p1 + (p2 > p1), flags);
+            right = parse_expr_inner(p, right, p1 + (p2 > p1), right_start, flags);
             if (right == NULL)
                 return NULL;
         }
@@ -1001,6 +1037,7 @@ Node *parse_expr_inner(Parser *p, Node *left, int min_prec, int flags)
         if (parent == NULL)
             return NULL;
 
+        parent->text = (String) { p->s.src + start, p->s.cur - start };
         parent->left = left;
         parent->right = right;
 
@@ -1016,7 +1053,7 @@ Node *parse_expr_inner(Parser *p, Node *left, int min_prec, int flags)
             case TOKEN_OPER_DIV: parent->type = NODE_OPER_DIV; break;
             case TOKEN_OPER_MOD: parent->type = NODE_OPER_MOD; break;
             default: 
-            report(p, "Operator not implemented");
+            parser_report(p, "Operator not implemented");
             return NULL;
         }
 
@@ -1028,11 +1065,13 @@ Node *parse_expr_inner(Parser *p, Node *left, int min_prec, int flags)
 
 Node *parse_expr(Parser *p, int flags)
 {
+    int start = p->s.cur;
+
     Node *left = parse_atom(p);
     if (left == NULL)
         return NULL;
 
-    return parse_expr_inner(p, left, 0, flags);
+    return parse_expr_inner(p, left, 0, start, flags);
 }
 
 Node *parse_expr_stmt(Parser *p, int opflags)
@@ -1046,9 +1085,11 @@ Node *parse_expr_stmt(Parser *p, int opflags)
 
 Node *parse_ifelse_stmt(Parser *p, int opflags)
 {
+    int start = p->s.cur;
+
     Token t = next_token(p);
     if (t.type != TOKEN_KWORD_IF) {
-        report(p, "Missing 'if' keyword before if statement");
+        parser_report(p, "Missing 'if' keyword before if statement");
         return NULL;
     }
 
@@ -1058,7 +1099,7 @@ Node *parse_ifelse_stmt(Parser *p, int opflags)
 
     t = next_token(p);
     if (t.type != TOKEN_COLON) {
-        report(p, "Missing ':' after if condition");
+        parser_report(p, "Missing ':' after if condition");
         return NULL;
     }
 
@@ -1085,6 +1126,7 @@ Node *parse_ifelse_stmt(Parser *p, int opflags)
         return NULL;
 
     parent->type = NODE_IFELSE;
+    parent->text = (String) { p->s.src + start, p->s.cur - start };
     parent->left = if_stmt;
     parent->right = else_stmt;
     parent->cond = cond;
@@ -1094,15 +1136,17 @@ Node *parse_ifelse_stmt(Parser *p, int opflags)
 
 Node *parse_for_stmt(Parser *p, int opflags)
 {
+    int start = p->s.cur;
+
     Token t = next_token(p);
     if (t.type != TOKEN_KWORD_FOR) {
-        report(p, "Missing 'for' keyword at the start of a for statement");
+        parser_report(p, "Missing 'for' keyword at the start of a for statement");
         return NULL;
     }
 
     t = next_token(p);
     if (t.type != TOKEN_IDENT) {
-        report(p, "Missing iteraion variable name in for statement");
+        parser_report(p, "Missing iteraion variable name in for statement");
         return NULL;
     }
     String var1 = t.sval;
@@ -1114,7 +1158,7 @@ Node *parse_for_stmt(Parser *p, int opflags)
 
         t = next_token(p);
         if (t.type != TOKEN_IDENT) {
-            report(p, "Missing iteration variable name after ',' in for statement");
+            parser_report(p, "Missing iteration variable name after ',' in for statement");
             return NULL;
         }
         var2 = t.sval;
@@ -1123,7 +1167,7 @@ Node *parse_for_stmt(Parser *p, int opflags)
     }
 
     if (t.type != TOKEN_KWORD_IN) {
-        report(p, "Missing 'in' keyword after iteration variable name in for statement");
+        parser_report(p, "Missing 'in' keyword after iteration variable name in for statement");
         return NULL;
     }
 
@@ -1133,7 +1177,7 @@ Node *parse_for_stmt(Parser *p, int opflags)
 
     t = next_token(p);
     if (t.type != TOKEN_COLON) {
-        report(p, "Missing ':' after for statement set expression");
+        parser_report(p, "Missing ':' after for statement set expression");
         return NULL;
     }
 
@@ -1146,6 +1190,7 @@ Node *parse_for_stmt(Parser *p, int opflags)
         return NULL;
 
     parent->type = NODE_FOR;
+    parent->text = (String) { p->s.src + start, p->s.cur - start };
     parent->left = body;
     parent->for_var1 = var1;
     parent->for_var2 = var2;
@@ -1156,9 +1201,11 @@ Node *parse_for_stmt(Parser *p, int opflags)
 
 Node *parse_while_stmt(Parser *p, int opflags)
 {
+    int start = p->s.cur;
+
     Token t = next_token(p);
     if (t.type != TOKEN_KWORD_WHILE) {
-        report(p, "Missing keyword 'while' at the start of a while statement");
+        parser_report(p, "Missing keyword 'while' at the start of a while statement");
         return NULL;
     }
 
@@ -1168,7 +1215,7 @@ Node *parse_while_stmt(Parser *p, int opflags)
 
     t = next_token(p);
     if (t.type != TOKEN_COLON) {
-        report(p, "Missing token ':' after while statement condition");
+        parser_report(p, "Missing token ':' after while statement condition");
         return NULL;
     }
 
@@ -1181,6 +1228,7 @@ Node *parse_while_stmt(Parser *p, int opflags)
         return NULL;
 
     parent->type = NODE_WHILE;
+    parent->text = (String) { p->s.src + start, p->s.cur - start };
     parent->left = stmt;
     parent->cond = cond;
 
@@ -1189,10 +1237,12 @@ Node *parse_while_stmt(Parser *p, int opflags)
 
 Node *parse_block_stmt(Parser *p, b32 curly)
 {
+    int start = p->s.cur;
+
     if (curly) {
         Token t = next_token(p);
         if (t.type != TOKEN_CURLY_OPEN) {
-            report(p, "Missing '{' at the start of a block statement");
+            parser_report(p, "Missing '{' at the start of a block statement");
             return NULL;
         }
     }
@@ -1228,6 +1278,7 @@ Node *parse_block_stmt(Parser *p, b32 curly)
         return NULL;
 
     parent->type = NODE_BLOCK;
+    parent->text = (String) { p->s.src + start, p->s.cur - start };
     parent->left = head;
 
     return parent;
@@ -1235,22 +1286,24 @@ Node *parse_block_stmt(Parser *p, b32 curly)
 
 Node *parse_func_decl(Parser *p, int opflags)
 {
+    int start = p->s.cur;
+
     Token t = next_token(p);
     if (t.type != TOKEN_KWORD_FUN) {
-        report(p, "Missing keyword 'fun' at the start of a function declaration");
+        parser_report(p, "Missing keyword 'fun' at the start of a function declaration");
         return NULL;
     }
 
     t = next_token(p);
     if (t.type != TOKEN_IDENT) {
-        report(p, "Missing function name after 'fun' keyword");
+        parser_report(p, "Missing function name after 'fun' keyword");
         return NULL;
     }
     String name = t.sval;
 
     t = next_token(p);
     if (t.type != TOKEN_PAREN_OPEN) {
-        report(p, "Missing '(' after function name in declaration");
+        parser_report(p, "Missing '(' after function name in declaration");
         return NULL;
     }
 
@@ -1264,9 +1317,11 @@ Node *parse_func_decl(Parser *p, int opflags)
 
         for (;;) {
 
+            int arg_start = p->s.cur;
+
             t = next_token(p);
             if (t.type != TOKEN_IDENT) {
-                report(p, "Missing argument name in function declaration");
+                parser_report(p, "Missing argument name in function declaration");
                 return NULL;
             }
             String argname = t.sval;
@@ -1276,6 +1331,7 @@ Node *parse_func_decl(Parser *p, int opflags)
                 return NULL;
 
             node->type = NODE_FUNC_ARG;
+            node->text = (String) { p->s.src + arg_start, p->s.cur - arg_start };
             node->sval = argname;
 
             *arg_tail = node;
@@ -1305,6 +1361,7 @@ Node *parse_func_decl(Parser *p, int opflags)
         return NULL;
 
     parent->type = NODE_FUNC_DECL;
+    parent->text = (String) { p->s.src + start, p->s.cur - start };
     parent->func_name = name;
     parent->func_args = arg_head;
     parent->func_body = body;
@@ -1314,15 +1371,17 @@ Node *parse_func_decl(Parser *p, int opflags)
 
 Node *parse_var_decl(Parser *p, int opflags)
 {
+    int start = p->s.cur;
+
     Token t = next_token(p);
     if (t.type != TOKEN_KWORD_LET) {
-        report(p, "Missing keyword 'let' at the start of a variable declaration");
+        parser_report(p, "Missing keyword 'let' at the start of a variable declaration");
         return NULL;
     }
 
     t = next_token(p);
     if (t.type != TOKEN_IDENT) {
-        report(p, "Missing variable name after 'let' keyword");
+        parser_report(p, "Missing variable name after 'let' keyword");
         return NULL;
     }
     String name = t.sval;
@@ -1347,6 +1406,7 @@ Node *parse_var_decl(Parser *p, int opflags)
         return NULL;
 
     parent->type = NODE_VAR_DECL;
+    parent->text = (String) { p->s.src + start, p->s.cur - start };
     parent->var_name = name;
     parent->var_value = value;
 
@@ -1555,14 +1615,13 @@ void print_node(Node *node)
             }
             printf(">");
 
-
             Node *child = node->child;
             while (child) {
                 print_node(child);
                 child = child->next;
             }
 
-            printf("<%.*s>",
+            printf("</%.*s>",
                 node->tagname.len,
                 node->tagname.ptr
             );
@@ -1676,7 +1735,7 @@ void print_node(Node *node)
                 node->var_name.ptr);
             if (node->var_value) {
                 printf(" = ");
-                print_node(node);
+                print_node(node->var_value);
             }
             printf(";");
         }

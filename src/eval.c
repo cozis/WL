@@ -6,6 +6,72 @@
 #define FRAME_LIMIT 128
 #define EVAL_STACK_LIMIT 128
 
+#define HEAP_BASE 0xFEEDBEEFFEEDBEEF
+
+/*
+int
+float
+array
+map
+html
+bool
+none
+*/
+
+/*
+000 none
+001 true
+010 false
+011 short str
+100
+101
+110
+111 pointer
+*/
+
+typedef struct {
+    uint64_t data;
+} Value;
+
+typedef struct {
+    uint64_t data;
+} Pointer;
+
+typedef enum {
+    TYPE_NONE,
+    TYPE_BOOL,
+    TYPE_MAP,
+    TYPE_ARRAY,
+    TYPE_STRING,
+} Type;
+
+typedef struct MapItems MapItems;
+struct MapItems {
+    Pointer next;
+    Value   keys[8];
+    Value   items[8];
+};
+
+typedef struct {
+    Type      type;
+    int       count;
+    MapItems  head;
+    Pointer   tail;
+} Map;
+
+typedef struct ArrayItems ArrayItems;
+struct ArrayItems {
+    ArrayItems *next;
+    Value       items[16];
+};
+
+typedef struct {
+    Type        type;
+    int         count;
+    ArrayItems  head;
+    ArrayItems *tail;
+} Array;
+
 typedef struct {
 } Frame;
 
