@@ -5,6 +5,7 @@
 
 enum {
     OPCODE_NOPE    = 0x00,
+    OPCODE_EXIT    = 0x23,
     OPCODE_PUSHI   = 0x01,
     OPCODE_PUSHF   = 0x02,
     OPCODE_PUSHS   = 0x03,
@@ -27,6 +28,7 @@ enum {
     OPCODE_JUMP    = 0x13,
     OPCODE_JIFP    = 0x14,
     OPCODE_CALL    = 0x15,
+    OPCODE_VARS    = 0x22,
     OPCODE_RET     = 0x16,
     OPCODE_APPEND  = 0x17,
     OPCODE_INSERT1 = 0x18,

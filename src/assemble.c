@@ -43,6 +43,7 @@ typedef enum {
 typedef struct {
     ScopeType     type;
     int           sym_base;
+    int           max_vars;
     FunctionCall* calls;
 } Scope;
 
@@ -212,29 +213,48 @@ int count_nodes(Node *head)
     return n;
 }
 
-int find_symbol_in_local_scope(Assembler *a, String name)
-{
-    for (int i = a->num_syms-1; i >= a->scopes[a->num_scopes-1].sym_base; i--)
-        if (streq(a->syms[i].name, name))
-            return i;
-
-    return -1;
-}
-
-int find_symbol_in_function(Assembler *a, String name)
+Scope *parent_scope(Assembler *a)
 {
     assert(a->num_scopes > 0);
 
-    // Find the index of the parent function scope or the global scope
     int parent = a->num_scopes-1;
-    while (parent > 1 && a->scopes[parent].type != SCOPE_FUNC)
+    while (a->scopes[parent].type != SCOPE_FUNC
+        && a->scopes[parent].type != SCOPE_GLOBAL)
         parent--;
 
-    for (int i = a->num_syms-1; i >= a->scopes[parent].sym_base; i--)
-        if (streq(a->syms[i].name, name))
-            return i;
+    Scope *scope = &a->scopes[parent];
 
-    return -1;
+    assert(scope->type == SCOPE_GLOBAL
+        || scope->type == SCOPE_FUNC);
+
+    return scope;
+}
+
+Symbol *find_symbol_in_local_scope(Assembler *a, String name)
+{
+    for (int i = a->num_syms-1; i >= a->scopes[a->num_scopes-1].sym_base; i--)
+        if (streq(a->syms[i].name, name))
+            return &a->syms[i];
+    return NULL;
+}
+
+Symbol *find_symbol_in_function(Assembler *a, String name)
+{
+    Scope *scope = parent_scope(a);
+    for (int i = a->num_syms-1; i >= scope->sym_base; i--)
+        if (streq(a->syms[i].name, name))
+            return &a->syms[i];
+    return NULL;
+}
+
+int count_local_vars(Assembler *a)
+{
+    int n = 0;
+    Scope *scope = parent_scope(a);
+    for (int i = scope->sym_base; i < a->num_syms; i++)
+        if (a->syms[i].type == SYMBOL_VAR)
+            n++;
+    return n;
 }
 
 int declare_variable(Assembler *a, String name)
@@ -244,14 +264,21 @@ int declare_variable(Assembler *a, String name)
         return -1;
     }
 
-    if (find_symbol_in_local_scope(a, name) >= 0) {
+    if (find_symbol_in_local_scope(a, name)) {
         assembler_report(a, "Symbol '%.*s' already declared in this scope",
             name.len, name.ptr);
         return -1;
     }
 
-    a->syms[a->num_syms] = (Symbol) { SYMBOL_VAR, name, -1 };
-    return a->num_syms++;
+    int off = count_local_vars(a);
+    a->syms[a->num_syms++] = (Symbol) { SYMBOL_VAR, name, off };
+
+    Scope *scope = parent_scope(a);
+
+    if (scope->max_vars < off + 1)
+        scope->max_vars = off + 1;
+
+    return off;
 }
 
 int declare_function(Assembler *a, String name, int off)
@@ -261,14 +288,13 @@ int declare_function(Assembler *a, String name, int off)
         return -1;
     }
 
-    if (find_symbol_in_local_scope(a, name) >= 0) {
-        assembler_report(a, "Symbol '%.*s' already declared in this scope",
-            name.len, name.ptr);
+    if (find_symbol_in_local_scope(a, name)) {
+        assembler_report(a, "Symbol '%.*s' already declared in this scope", name.len, name.ptr);
         return -1;
     }
 
-    a->syms[a->num_syms] = (Symbol) { SYMBOL_FUNC, name, off };
-    return a->num_syms++;
+    a->syms[a->num_syms++] = (Symbol) { SYMBOL_FUNC, name, off };
+    return 0;
 }
 
 /*
@@ -352,6 +378,7 @@ int push_scope(Assembler *a, ScopeType type)
     Scope *scope = &a->scopes[a->num_scopes++];
     scope->type     = type;
     scope->sym_base = a->num_syms;
+    scope->max_vars = 0;
     scope->calls    = NULL;
     return 0;
 }
@@ -364,15 +391,14 @@ int pop_scope(Assembler *a)
     FunctionCall **prev = &scope->calls;
     while (call) {
 
-        int idx = find_symbol_in_local_scope(a, call->name);
+        Symbol *sym = find_symbol_in_local_scope(a, call->name);
 
-        if (idx == -1) {
+        if (sym == NULL) {
             prev = &call->next;
             call = call->next;
             continue;
         }
 
-        Symbol *sym = &a->syms[idx];
         if (sym->type != SYMBOL_FUNC) {
             assembler_report(a, "Symbol '%.*s' is not a function", call->name.len, call->name.ptr);
             return -1;
@@ -405,8 +431,6 @@ int pop_scope(Assembler *a)
 
 void assemble_node(Assembler *a, Node *node)
 {
-    printf("Compiling [%.*s]\n", node->text.len, node->text.ptr);
-
     switch (node->type) {
 
         case NODE_FUNC_DECL:
@@ -419,6 +443,9 @@ void assemble_node(Assembler *a, Node *node)
 
             ret = push_scope(a, SCOPE_FUNC);
             if (ret < 0) return;
+
+            append_u8(&a->out, OPCODE_VARS);
+            int p = append_u32(&a->out, 0);
 
             Node *args[32];
             int arg_count = 0;
@@ -434,11 +461,11 @@ void assemble_node(Assembler *a, Node *node)
 
             for (int i = arg_count-1; i >= 0; i--) {
 
-                int idx = declare_variable(a, args[i]->sval);
-                if (idx < 0) return;
+                int off = declare_variable(a, args[i]->sval);
+                if (off < 0) return;
 
                 append_u8(&a->out, OPCODE_SETV);
-                append_u8(&a->out, idx); // TODO: make this relative to the frame
+                append_u8(&a->out, off);
             }
 
             if (is_expr(node->func_body)) {
@@ -449,6 +476,8 @@ void assemble_node(Assembler *a, Node *node)
                 append_u8(&a->out, OPCODE_PUSHN);
                 append_u8(&a->out, OPCODE_RET);
             }
+
+            patch_u32(&a->out, p, a->scopes[a->num_scopes-1].max_vars);
 
             ret = pop_scope(a);
             if (ret < 0) return;
@@ -493,14 +522,16 @@ void assemble_node(Assembler *a, Node *node)
 
         case NODE_VAR_DECL:
         {
-            int idx = declare_variable(a, node->var_name);
-            if (idx < 0) return;
+            int off = declare_variable(a, node->var_name);
+            if (off < 0) return;
 
-            if (node->var_value) {
+            if (node->var_value)
                 assemble_node(a, node->var_value);
-                append_u8(&a->out, OPCODE_SETV);
-                append_u8(&a->out, idx);
-            }
+            else
+                append_u8(&a->out, OPCODE_PUSHN);
+
+            append_u8(&a->out, OPCODE_SETV);
+            append_u8(&a->out, off);
         }
         break;
 
@@ -726,13 +757,17 @@ void assemble_node(Assembler *a, Node *node)
         case NODE_VALUE_VAR:
         {
             String name = node->sval;
-            int idx = find_symbol_in_function(a, name);
-            if (idx < 0) {
+            Symbol *sym = find_symbol_in_function(a, name);
+            if (sym == NULL) {
                 assembler_report(a, "Reference to undefined variable '%.*s'", name.len, name.ptr);
                 return;
             }
+            if (sym->type != SYMBOL_VAR) {
+                assembler_report(a, "Symbol '%.*s' is not a variable", sym->name.len, sym->name.ptr);
+                return;
+            }
             append_u8(&a->out, OPCODE_PUSHV);
-            append_u8(&a->out, idx); // TODO: make this relative to the frame
+            append_u8(&a->out, sym->off);
         }
         break;
 
@@ -794,20 +829,20 @@ void assemble_node(Assembler *a, Node *node)
 
                 String name = dst->sval;
 
-                int idx = find_symbol_in_function(a, name);
-                if (idx < 0) {
+                Symbol *sym = find_symbol_in_function(a, name);
+                if (sym == NULL) {
                     assembler_report(a, "Undeclared variable '%.*s'", name.len, name.ptr);
                     return;
                 }
 
-                if (a->syms[idx].type != SYMBOL_VAR) {
+                if (sym->type != SYMBOL_VAR) {
                     assembler_report(a, "Symbol '%.*s' can't be assigned to", name.len, name.ptr);
                     return;
                 }
 
                 assemble_node(a, src);
                 append_u8(&a->out, OPCODE_SETV);
-                append_u8(&a->out, idx); // TODO: this index should be relative to the frame
+                append_u8(&a->out, sym->off);
 
             } else if (dst->type == NODE_SELECT) {
 
@@ -839,34 +874,31 @@ AssembleResult assemble(Node *root, Arena *arena, char *errbuf, int errmax)
 {
     Assembler a = {0, .a=arena, .errbuf=errbuf, .errmax=errmax, .errlen=0};
 
-    append_u32(&a.out, 0xFEEDBEEF); // magic
-    int p1 = append_u32(&a.out, 0); // code size
-    int p2 = append_u32(&a.out, 0); // data size
-
     int ret = push_scope(&a, SCOPE_GLOBAL);
-    if (ret < 0) {
+    if (ret < 0)
         return (AssembleResult) { (Program) {0}, a.errlen };
-    }
+
+    append_u8(&a.out, OPCODE_VARS);
+    int p = append_u32(&a.out, 0);
 
     assemble_node(&a, root);
-    append_u8(&a.out, OPCODE_NOPE);
+    append_u8(&a.out, OPCODE_EXIT);
+
+    patch_u32(&a.out, p, a.scopes[a.num_scopes-1].max_vars);
 
     ret = pop_scope(&a);
-    if (ret < 0) {
+    if (ret < 0)
         return (AssembleResult) { (Program) {0}, a.errlen };
-    }
 
-    patch_u32(&a.out, p1, a.out.len - 3 * sizeof(uint32_t));
-    patch_u32(&a.out, p2, a.strings_len);
+    OutputBuffer out = {0};
+    append_u32(&out, 0xFEEDBEEF);    // magic
+    append_u32(&out, a.out.len);     // code size
+    append_u32(&out, a.strings_len); // data size
+    append_mem(&out, a.out.ptr, a.out.len);
+    append_mem(&out, a.strings, a.strings_len);
 
-    append_mem(&a.out, a.strings, a.strings_len);
-
-    Program p = {
-        a.out.ptr,
-        a.out.len,
-    };
-
-    return (AssembleResult) { p, a.errlen };
+    free(a.out.ptr);
+    return (AssembleResult) { (Program) { out.ptr, out.len }, a.errlen };
 }
 
 void print_program(Program p)
@@ -899,12 +931,16 @@ void print_program(Program p)
 
     while (cur < code_size + 3 * sizeof(uint32_t)) {
 
-        printf("%d: ", cur - 3 * sizeof(uint32_t));
+        printf("%" LLU ": ", cur - 3 * sizeof(uint32_t));
 
         switch (((uint8_t*) p.ptr)[cur++]) {
 
             case OPCODE_NOPE:
             printf("NOPE");
+            break;
+
+            case OPCODE_EXIT:
+            printf("EXIT");
             break;
 
             case OPCODE_PUSHI:
@@ -968,6 +1004,12 @@ void print_program(Program p)
                 cur += sizeof(uint32_t);
 
                 printf("PUSHM %u", cap);
+            }
+            break;
+
+            case OPCODE_PUSHN:
+            {
+                printf("PUSHN");
             }
             break;
 
@@ -1051,11 +1093,21 @@ void print_program(Program p)
                 memcpy(&num, p.ptr + cur, sizeof(uint8_t));
                 cur += sizeof(uint8_t);
 
-                uint8_t off;
-                memcpy(&off, p.ptr + cur, sizeof(uint8_t));
-                cur += sizeof(uint8_t);
+                uint32_t off;
+                memcpy(&off, p.ptr + cur, sizeof(uint32_t));
+                cur += sizeof(uint32_t);
 
                 printf("CALL %u %u", num, off);
+            }
+            break;
+
+            case OPCODE_VARS:
+            {
+                uint32_t num;
+                memcpy(&num, p.ptr + cur, sizeof(uint32_t));
+                cur += sizeof(uint32_t);
+
+                printf("VARS %u", num);
             }
             break;
 

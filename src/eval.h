@@ -3,6 +3,6 @@
 
 #include "assemble.h"
 
-void eval(Program program);
+int eval(Program p, Arena *a, char *errbuf, int errmax);
 
 #endif // WL_EVAL_INCLUDED

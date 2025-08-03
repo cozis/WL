@@ -361,7 +361,6 @@ Token next_token(Parser *p)
         return (Token) { .type=TOKEN_VALUE_STR, .sval=(String) { .ptr=buf, .len=len } };
     }
 
-    if (consume_str(&p->s, S("=")))  return (Token) { .type=TOKEN_OPER_ASS };
     if (consume_str(&p->s, S("=="))) return (Token) { .type=TOKEN_OPER_EQL };
     if (consume_str(&p->s, S("!="))) return (Token) { .type=TOKEN_OPER_NQL };
     if (consume_str(&p->s, S("<")))  return (Token) { .type=TOKEN_OPER_LSS };
@@ -371,6 +370,7 @@ Token next_token(Parser *p)
     if (consume_str(&p->s, S("*")))  return (Token) { .type=TOKEN_OPER_MUL };
     if (consume_str(&p->s, S("/")))  return (Token) { .type=TOKEN_OPER_DIV };
     if (consume_str(&p->s, S("%")))  return (Token) { .type=TOKEN_OPER_MOD };
+    if (consume_str(&p->s, S("=")))  return (Token) { .type=TOKEN_OPER_ASS };
 
     if (consume_str(&p->s, S("(")))  return (Token) { .type=TOKEN_PAREN_OPEN };
     if (consume_str(&p->s, S(")")))  return (Token) { .type=TOKEN_PAREN_CLOSE };
@@ -1737,7 +1737,7 @@ void print_node(Node *node)
                 printf(" = ");
                 print_node(node->var_value);
             }
-            printf(";");
+            //printf(";");
         }
         break;
     }

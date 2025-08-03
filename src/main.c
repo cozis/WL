@@ -2,6 +2,7 @@
 #include <stdlib.h>
 
 #include "file.h"
+#include "eval.h"
 #include "parse.h"
 #include "assemble.h"
 
@@ -35,7 +36,11 @@ int main(void)
 
     print_program(assemble_result.program);
 
-    eval(assemble_result.program);
+    ret = eval(assemble_result.program, &a, err, COUNT(err));
+    if (ret < 0) {
+        printf("%s\n", err);
+        return -1;
+    }
 
     free(src.ptr);
     free(mem);
