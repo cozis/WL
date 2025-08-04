@@ -9,6 +9,7 @@
 
 #define FRAME_LIMIT 128
 #define EVAL_STACK_LIMIT 128
+#define GROUP_LIMIT 128
 
 #define HEAP_BASE 0xFEEDBEEFFEEDBEEF
 
@@ -84,8 +85,8 @@ typedef struct {
 } StringValue;
 
 typedef struct {
-    int base;
-    int return_off;
+    int group;
+    int return_addr;
 } Frame;
 
 typedef struct {
@@ -100,11 +101,14 @@ typedef struct {
     int   errmax;
     int   errlen;
 
-    int frame_depth;
+    int num_frames;
     Frame frames[FRAME_LIMIT];
 
     int   eval_depth;
     Value eval_stack[EVAL_STACK_LIMIT];
+
+    int num_groups;
+    int groups[GROUP_LIMIT];
 
 } Eval;
 
@@ -224,7 +228,7 @@ Value make_float(Eval *e, float x)
     return ((Value) v) | 7;
 }
 
-Value make_str(Eval *e, String x)
+Value make_str(Eval *e, String x) // TODO: This should reuse the string contents when possible
 {
     StringValue *v = alloc(e->a, (int) sizeof(StringValue) + x.len, 8);
     if (v == NULL) {
@@ -276,6 +280,8 @@ b32 valeq(Value a, Value b);
 
 int map_select(Eval *e, Value map, Value key, Value *val)
 {
+    (void) e;
+
     MapValue *p = get_map(map);
     MapItems *batch = &p->head;
     while (batch) {
@@ -319,8 +325,37 @@ int map_insert(Eval *e, Value map, Value key, Value val)
     return 0;
 }
 
-Value *array_select(Eval *e, Value array, uint32_t key)
+void value_print(Value v);
+
+void map_print(Value v)
 {
+    printf("{ ");
+
+    MapValue *p = get_map(v);
+    MapItems *batch = &p->head;
+    while (batch) {
+
+        int num = ITEMS_PER_MAP_BATCH;
+        if (batch->next == NULL)
+            num = p->tail_count;
+
+        for (int i = 0; i < num; i++) {
+            value_print(batch->keys[i]);
+            printf(": ");
+            value_print(batch->items[i]);
+            printf(", ");
+        }
+
+        batch = batch->next;
+    }
+
+    printf("}");
+}
+
+Value *array_select(Eval *e, Value array, int key)
+{
+    (void) e;
+
     ArrayValue *p = get_array(array);
     ArrayItems *batch = &p->head;
     int cursor = 0;
@@ -360,6 +395,25 @@ int array_append(Eval *e, Value array, Value val)
     p->tail_count++;
     p->count++;
     return 0;
+}
+
+void array_print(Value v)
+{
+    ArrayValue *p = get_array(v);
+    ArrayItems *batch = &p->head;
+    int cursor = 0;
+    while (batch) {
+
+        int num = ITEMS_PER_MAP_BATCH;
+        if (batch->next == NULL)
+            num = p->tail_count;
+
+        for (int i = 0; i < num; i++)
+            value_print(batch->items[i]);
+
+        batch = batch->next;
+        cursor += num;
+    }
 }
 
 b32 valeq(Value a, Value b)
@@ -438,9 +492,58 @@ b32 valgrt(Value a, Value b)
     return false;
 }
 
+void value_print(Value v)
+{
+    switch (type_of(v)) {
+
+        case TYPE_NONE:
+        printf("none");
+        break;
+
+        case TYPE_BOOL:
+        printf(v == VALUE_TRUE ? "true" : "false");
+        break;
+
+        case TYPE_INT:
+        printf("%" LLD, get_int(v));
+        break;
+
+        case TYPE_FLOAT:
+        printf("%lf", get_float(v));
+        break;
+
+        case TYPE_MAP:
+        map_print(v);
+        break;
+
+        case TYPE_ARRAY:
+        array_print(v);
+        break;
+
+        case TYPE_STRING:
+        {
+            String s = get_str(v);
+            printf("%.*s", s.len, s.ptr);
+        }
+        break;
+
+        case TYPE_ERROR:
+        printf("error");
+        break;
+    }
+    fflush(stdout);
+}
+
 int step(Eval *e)
 {
-    uint8_t opcode = e->code.ptr[e->off++];
+    uint8_t opcode = e->code.ptr[e->off];
+/*
+    printf("%-3d: ", e->off);
+    print_instruction(e->code.ptr + e->off, e->data.ptr);
+    printf("\n");
+*/
+    e->off++;
+
     switch (opcode) {
 
         case OPCODE_NOPE:
@@ -452,6 +555,77 @@ int step(Eval *e)
         case OPCODE_EXIT:
         {
             return 1;
+        }
+        break;
+
+        case OPCODE_GROUP:
+        {
+            e->groups[e->num_groups++] = e->eval_depth;
+        }
+        break;
+
+        case OPCODE_GPOP:
+        {
+            int group = e->groups[--e->num_groups];
+            e->eval_depth = group;
+        }
+        break;
+
+        case OPCODE_GPRINT:
+        {
+            for (int i = e->groups[e->num_groups-1]; i < e->eval_depth; i++)
+                value_print(e->eval_stack[i]);
+        }
+        break;
+
+        case OPCODE_GCOALESCE:
+        {
+            e->num_groups--;
+        }
+        break;
+
+        case OPCODE_GTRUNC:
+        {
+            uint32_t num;
+            memcpy(&num, (uint8_t*) e->code.ptr + e->off, sizeof(uint32_t));
+            e->off += (int) sizeof(uint32_t);
+
+            int group_size = e->eval_depth - e->groups[e->num_groups-1];
+
+            if (group_size < (int) num) {
+                for (int i = 0; i < (int) num - group_size; i++)
+                    e->eval_stack[e->eval_depth + i] = VALUE_NONE;
+            }
+
+            e->eval_depth = e->groups[e->num_groups-1] + num;
+        }
+        break;
+
+        case OPCODE_GOVERWRITE:
+        {
+            int current = e->groups[e->num_groups-1];
+            int parent  = e->groups[e->num_groups-2];
+
+            int current_size = e->eval_depth - current;
+
+            for (int i = 0; i < current_size; i++)
+                e->eval_stack[parent + i] = e->eval_stack[current + i];
+
+            e->num_groups--;
+            e->eval_depth = parent + current_size;
+        }
+        break;
+
+        case OPCODE_GPACK:
+        {
+            Value array = make_array(e);
+            if (array == VALUE_ERROR)
+                return -1;
+            for (int i = e->groups[e->num_groups-1]; i < e->eval_depth; i++)
+                array_append(e, array, e->eval_stack[i]);
+
+            e->eval_depth = e->groups[--e->num_groups];
+            e->eval_stack[e->eval_depth++] = array;
         }
         break;
 
@@ -510,7 +684,10 @@ int step(Eval *e)
             memcpy(&idx, (uint8_t*) e->code.ptr + e->off, sizeof(uint8_t));
             e->off += sizeof(uint8_t);
 
-            e->eval_stack[e->eval_depth++] = e->eval_stack[e->frames[e->frame_depth-1].base + idx];
+            int group = e->frames[e->num_frames-1].group;
+            Value v = e->eval_stack[e->groups[group] + idx];
+
+            e->eval_stack[e->eval_depth++] = v;
         }
         break;
 
@@ -542,6 +719,7 @@ int step(Eval *e)
 
         case OPCODE_POP:
         {
+            assert(e->num_groups == 0 || e->eval_depth > e->groups[e->num_groups-1]);
             e->eval_depth--;
         }
         break;
@@ -889,8 +1067,8 @@ int step(Eval *e)
             memcpy(&x, (uint8_t*) e->code.ptr + e->off, (int) sizeof(x));
             e->off += (int) sizeof(x);
 
-            Frame *f = &e->frames[e->frame_depth-1];
-            e->eval_stack[f->base + x] = e->eval_stack[--e->eval_depth];
+            Frame *f = &e->frames[e->num_frames-1];
+            e->eval_stack[e->groups[f->group] + x] = e->eval_stack[--e->eval_depth];
         }
         break;
 
@@ -923,50 +1101,23 @@ int step(Eval *e)
 
         case OPCODE_CALL:
         {
-            uint8_t num;
-            memcpy(&num, (uint8_t*) e->code.ptr + e->off, sizeof(uint8_t));
-            e->off += (int) sizeof(uint8_t);
-
             uint32_t off;
             memcpy(&off, (uint8_t*) e->code.ptr + e->off, sizeof(uint32_t));
             e->off += (int) sizeof(uint32_t);
 
-            // Push a dummy value for the return value
-            e->eval_stack[e->eval_depth++] = VALUE_NONE;
-
-            if (e->frame_depth == FRAME_LIMIT) {
+            if (e->num_frames == FRAME_LIMIT) {
                 eval_report(e, "Frame limit reached");
                 return -1;
             }
-            Frame *f = &e->frames[e->frame_depth++];
-            f->base = e->eval_depth;
-            f->return_off = e->off;
+            e->frames[e->num_frames++] = (Frame) {.return_addr=e->off, .group=e->num_groups-1};
 
             e->off = off;
         }
         break;
 
-        case OPCODE_VARS:
-        {
-            uint32_t num;
-            memcpy(&num, e->code.ptr + e->off, sizeof(uint32_t));
-            e->off += sizeof(uint32_t);
-
-            e->eval_depth += num;
-        }
-        break;
-
         case OPCODE_RET:
         {
-            Frame *f = &e->frames[--e->frame_depth];
-
-            assert(e->eval_depth > f->base);
-            Value r = e->eval_stack[--e->eval_depth];
-
-            e->off = f->return_off;
-            e->eval_depth = f->base;
-
-            e->eval_stack[e->eval_depth-1] = r;
+            e->off = e->frames[--e->num_frames].return_addr;
         }
         break;
 
@@ -1076,18 +1227,7 @@ int step(Eval *e)
         case OPCODE_PRINT:
         {
             Value v = e->eval_stack[e->eval_depth-1];
-
-            switch (type_of(v)) {
-                case TYPE_NONE  : printf("none"); break;
-                case TYPE_BOOL  : printf(v == VALUE_TRUE ? "true" : "false"); break;
-                case TYPE_INT   : printf("%" LLD, get_int(v)); break;
-                case TYPE_FLOAT : printf("%lf", get_float(v)); break;
-                case TYPE_MAP   : printf("map"); break;
-                case TYPE_ARRAY : printf("array"); break;
-                case TYPE_STRING: printf("%.*s", get_str(v).len, get_str(v).ptr); break;
-                case TYPE_ERROR : printf("error"); break;
-            }
-            fflush(stdout);
+            value_print(v);
         }
         break;
 
@@ -1101,42 +1241,27 @@ int step(Eval *e)
 
 int eval(Program p, Arena *a, char *errbuf, int errmax)
 {
-    if (p.len < 3 * sizeof(uint32_t)) {
-        snprintf(errbuf, errmax, "Invalid program");
-        return -1;
-    }
-    uint32_t magic;
-    uint32_t code_size;
-    uint32_t data_size;
-    memcpy(&magic,     p.ptr + 0, sizeof(uint32_t));
-    memcpy(&code_size, p.ptr + 4, sizeof(uint32_t));
-    memcpy(&data_size, p.ptr + 8, sizeof(uint32_t));
+    String code;
+    String data;
 
-    if (magic != 0xFEEDBEEF) {
-        snprintf(errbuf, errmax, "Invalid program");
+    int ret = parse_program_header(p, &code, &data, errbuf, errmax);
+    if (ret < 0)
         return -1;
-    }
-
-    if (code_size + data_size + 3 * sizeof(uint32_t) != p.len) {
-        snprintf(errbuf, errmax, "Invalid program");
-        return -1;
-    }
 
     Eval e = {
-        .code = { p.ptr + 3 * sizeof(uint32_t),             code_size },
-        .data = { p.ptr + 3 * sizeof(uint32_t) + code_size, data_size },
+        .code=code,
+        .data=data,
         .off=0,
         .a=a,
         .errbuf=errbuf,
         .errmax=errmax,
         .errlen=0,
-        .frame_depth=0,
+        .num_frames=0,
         .eval_depth=0,
+        .num_groups=0,
     };
 
-    Frame *f = &e.frames[e.frame_depth++];
-    f->base = 0;
-    f->return_off = 0;
+    e.frames[e.num_frames++] = (Frame) { 0, 0 };
 
     for (;;) {
         int ret = step(&e);
@@ -1144,5 +1269,6 @@ int eval(Program p, Arena *a, char *errbuf, int errmax)
         if (ret == 1) break;
     }
 
+    e.num_frames--;
     return 0;
 }

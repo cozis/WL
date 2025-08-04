@@ -203,8 +203,19 @@ Node *alloc_node(Parser *p)
 
 Token next_token(Parser *p)
 {
-    while (p->s.cur < p->s.len && is_space(p->s.src[p->s.cur]))
-        p->s.cur++;
+    for (;;) {
+        while (p->s.cur < p->s.len && is_space(p->s.src[p->s.cur]))
+            p->s.cur++;
+
+        if (!consume_str(&p->s, S("<!--")))
+            break;
+
+        while (p->s.cur < p->s.len) {
+            if (consume_str(&p->s, S("-->")))
+                break;
+            p->s.cur++;
+        }
+    }
 
     if (p->s.cur == p->s.len)
         return (Token) { .type=TOKEN_END };
@@ -406,6 +417,7 @@ Token next_token_or_newline(Parser *p)
 enum {
     IGNORE_GRT = 1 << 0,
     IGNORE_LSS = 1 << 1,
+    IGNORE_DIV = 1 << 2,
 };
 
 Node *parse_stmt(Parser *p, int opflags);
@@ -429,6 +441,7 @@ Node *parse_html(Parser *p)
     Node *param_head;
     Node **param_tail = &param_head;
 
+    b32 no_body = false;
     for (;;) {
 
         int param_offset = p->s.cur;
@@ -437,8 +450,20 @@ Node *parse_html(Parser *p)
         Node  *attr_value;
 
         t = next_token(p);
+
         if (t.type == TOKEN_OPER_GRT)
             break;
+
+        if (t.type == TOKEN_OPER_DIV) {
+            t = next_token(p);
+            if (t.type != TOKEN_OPER_GRT) {
+                parser_report(p, "Invalid token '/' inside an HTML tag");
+                return NULL;
+            }
+            no_body = true;
+            break;
+        }
+
         if (t.type != TOKEN_IDENT) {
             parser_report(p, "Invalid token inside HTML tag");
             return NULL;
@@ -449,7 +474,7 @@ Node *parse_html(Parser *p)
         t = next_token(p);
         if (t.type == TOKEN_OPER_ASS) {
 
-            attr_value = parse_expr(p, IGNORE_GRT);
+            attr_value = parse_expr(p, IGNORE_GRT | IGNORE_DIV);
             if (attr_value == NULL)
                 return NULL;
 
@@ -476,13 +501,26 @@ Node *parse_html(Parser *p)
     Node *head;
     Node **tail = &head;
 
-    for (;;) {
+    if (!no_body) for (;;) {
 
         for (;;) {
 
             int off = p->s.cur;
-            while (p->s.cur < p->s.len && p->s.src[p->s.cur] != '<' && p->s.src[p->s.cur] != '\\')
-                p->s.cur++;
+
+            for (;;) {
+
+                while (p->s.cur < p->s.len && p->s.src[p->s.cur] != '<' && p->s.src[p->s.cur] != '\\')
+                    p->s.cur++;
+
+                if (!consume_str(&p->s, S("<!--")))
+                    break;
+
+                while (p->s.cur < p->s.len) {
+                    if (consume_str(&p->s, S("-->")))
+                        break;
+                    p->s.cur++;
+                }
+            }
 
             if (p->s.cur > off) {
 
@@ -715,9 +753,13 @@ int precedence(Token t, int flags)
         return 3;
 
         case TOKEN_OPER_MUL:
-        case TOKEN_OPER_DIV:
         case TOKEN_OPER_MOD:
-        return 3;
+        return 4;
+
+        case TOKEN_OPER_DIV:
+        if (flags & IGNORE_DIV)
+            return -1;
+        return 4;
 
         default:
         break;
@@ -1480,6 +1522,13 @@ Node *parse_stmt(Parser *p, int opflags)
 void print_node(Node *node)
 {
     switch (node->type) {
+
+        case NODE_PRINT:
+        {
+            printf("print ");
+            print_node(node->left);
+        }
+        break;
 
         case NODE_BLOCK:
         {

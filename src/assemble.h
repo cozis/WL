@@ -6,6 +6,13 @@
 enum {
     OPCODE_NOPE    = 0x00,
     OPCODE_EXIT    = 0x23,
+    OPCODE_GROUP   = 0x25,
+    OPCODE_GPOP    = 0x26,
+    OPCODE_GPRINT  = 0x27,
+    OPCODE_GTRUNC  = 0x28,
+    OPCODE_GCOALESCE = 0x29,
+    OPCODE_GOVERWRITE = 0x2A,
+    OPCODE_GPACK   = 0x2B,
     OPCODE_PUSHI   = 0x01,
     OPCODE_PUSHF   = 0x02,
     OPCODE_PUSHS   = 0x03,
@@ -28,7 +35,6 @@ enum {
     OPCODE_JUMP    = 0x13,
     OPCODE_JIFP    = 0x14,
     OPCODE_CALL    = 0x15,
-    OPCODE_VARS    = 0x22,
     OPCODE_RET     = 0x16,
     OPCODE_APPEND  = 0x17,
     OPCODE_INSERT1 = 0x18,
@@ -47,7 +53,9 @@ typedef struct {
     int errlen;
 } AssembleResult;
 
-void print_program(Program p);
+int parse_program_header(Program p, String *code, String *data, char *errbuf, int errmax);
+void  print_program(Program program);
+char *print_instruction(char *p, char *data);
 AssembleResult assemble(Node *root, Arena *arena, char *errbuf, int errmax);
 
 #endif // WL_ASSEMBLE_INCLUDED
