@@ -1,0 +1,1 @@
+<!-- This is a comment. Comments have no effect! -->

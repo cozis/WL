@@ -4,9 +4,15 @@
 
 #include "WL.h"
 
-int main(void)
+int main(int argc, char **argv)
 {
-    FILE *f = fopen("main.wl", "rb");
+    if (argc < 2) {
+        printf("Missing file path\n");
+        return -1;
+    }
+    char *file = argv[1];
+
+    FILE *f = fopen(file, "rb");
     if (f == NULL)
         return -1;
 
