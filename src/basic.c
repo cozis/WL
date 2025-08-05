@@ -1,31 +1,31 @@
-#include <stddef.h>
-#include <stdint.h>
 
 #ifndef WL_AMALGAMATION
+#include "includes.h"
 #include "basic.h"
+#include "public.h"
 #endif
 
-b32 is_space(char c)
+bool is_space(char c)
 {
     return c == ' ' || c == '\t' || c == '\r' || c == '\n';
 }
 
-b32 is_digit(char c)
+bool is_digit(char c)
 {
     return c >= '0' && c <= '9';
 }
 
-b32 is_alpha(char c)
+bool is_alpha(char c)
 {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
 }
 
-b32 is_printable(char c)
+bool is_printable(char c)
 {
     return c >= ' ' && c <= '~';
 }
 
-b32 is_hex_digit(char c)
+bool is_hex_digit(char c)
 {
     return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
 }
@@ -49,7 +49,7 @@ int hex_digit_to_int(char c)
 }
 
 
-b32 streq(String a, String b)
+bool streq(String a, String b)
 {
     if (a.len != b.len)
         return false;
@@ -59,7 +59,7 @@ b32 streq(String a, String b)
     return true;
 }
 
-b32 streqcase(String a, String b)
+bool streqcase(String a, String b)
 {
     if (a.len != b.len)
         return false;
@@ -69,7 +69,7 @@ b32 streqcase(String a, String b)
     return true;
 }
 
-void *alloc(Arena *a, int len, int align)
+void *alloc(WL_Arena *a, int len, int align)
 {
     int pad = -(intptr_t) (a->ptr + a->cur) & (align-1);
     if (a->len - a->cur < len + pad)
@@ -79,7 +79,7 @@ void *alloc(Arena *a, int len, int align)
     return ret;
 }
 
-b32 grow_alloc(Arena *a, char *p, int new_len)
+bool grow_alloc(WL_Arena *a, char *p, int new_len)
 {
     int new_cur = (p - a->ptr) + new_len;
     if (new_cur > a->len)

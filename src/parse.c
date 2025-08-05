@@ -1,6 +1,3 @@
-#include <stdio.h>
-#include <stdarg.h>
-#include <string.h>
 
 #ifndef WL_AMALGAMATION
 #include "parse.h"
@@ -46,6 +43,7 @@ typedef enum {
     TOKEN_DOT,
     TOKEN_COMMA,
     TOKEN_COLON,
+    TOKEN_DOLLAR,
     TOKEN_NEWLINE,
 } TokType;
 
@@ -61,13 +59,13 @@ typedef struct {
 
 typedef struct {
     Scanner s;
-    Arena   *a;
+    WL_Arena   *a;
     char *errbuf;
     int   errmax;
     int   errlen;
 } Parser;
 
-b32 consume_str(Scanner *s, String x)
+bool consume_str(Scanner *s, String x)
 {
     if (x.len == 0)
         return false;
@@ -153,6 +151,7 @@ String tok2str(Token token, char *buf, int max)
         case TOKEN_DOT: return S(".");
         case TOKEN_COMMA: return S(",");
         case TOKEN_COLON: return S(":");
+        case TOKEN_DOLLAR: return S("$");
 
         case TOKEN_NEWLINE: return S("\\n");
     }
@@ -395,6 +394,7 @@ Token next_token(Parser *p)
     if (consume_str(&p->s, S(".")))  return (Token) { .type=TOKEN_DOT };
     if (consume_str(&p->s, S(",")))  return (Token) { .type=TOKEN_COMMA };
     if (consume_str(&p->s, S(":")))  return (Token) { .type=TOKEN_COLON };
+    if (consume_str(&p->s, S("$")))  return (Token) { .type=TOKEN_DOLLAR };
 
     parser_report(p, "Invalid character '%c'", c);
     return (Token) { .type=TOKEN_ERROR };
@@ -441,7 +441,7 @@ Node *parse_html(Parser *p)
     Node *param_head;
     Node **param_tail = &param_head;
 
-    b32 no_body = false;
+    bool no_body = false;
     for (;;) {
 
         int param_offset = p->s.cur;
@@ -768,7 +768,7 @@ int precedence(Token t, int flags)
     return -1;
 }
 
-b32 right_associative(Token t)
+bool right_associative(Token t)
 {
     return t.type == TOKEN_OPER_ASS;
 }
@@ -927,6 +927,26 @@ Node *parse_atom(Parser *p)
         }
         break;
 
+        case TOKEN_DOLLAR:
+        {
+            t = next_token(p);
+            if (t.type != TOKEN_IDENT) {
+                parser_report(p, "Missing identifier after '$'");
+                return NULL;
+            }
+
+            Node *node = alloc_node(p);
+            if (node == NULL)
+                return NULL;
+
+            node->type = NODE_VALUE_SYSVAR;
+            node->text = (String) { p->s.src + start, p->s.cur - start };
+            node->sval = t.sval;
+
+            ret = node;
+        }
+        break;
+
         default:
         {
             char buf[1<<8];
@@ -989,7 +1009,7 @@ Node *parse_atom(Parser *p)
 
             ret = parent;
 
-        } else if (t.type == TOKEN_PAREN_OPEN && ret->type == NODE_VALUE_VAR) {
+        } else if (t.type == TOKEN_PAREN_OPEN && (ret->type == NODE_VALUE_VAR || ret->type == NODE_VALUE_SYSVAR)) {
 
             Node *arg_head;
             Node **arg_tail = &arg_head;
@@ -1280,7 +1300,7 @@ Node *parse_while_stmt(Parser *p, int opflags)
     return parent;
 }
 
-Node *parse_block_stmt(Parser *p, b32 curly)
+Node *parse_block_stmt(Parser *p, bool curly)
 {
     int start = p->s.cur;
 
@@ -1523,6 +1543,14 @@ void print_node(Node *node)
 {
     switch (node->type) {
 
+        case NODE_NESTED:
+        {
+            printf("(");
+            print_node(node->left);
+            printf(")");
+        }
+        break;
+
         case NODE_PRINT:
         {
             printf("print ");
@@ -1651,6 +1679,10 @@ void print_node(Node *node)
 
         case NODE_VALUE_VAR:
         printf("%.*s", node->sval.len, node->sval.ptr);
+        break;
+
+        case NODE_VALUE_SYSVAR:
+        printf("$%.*s", node->sval.len, node->sval.ptr);
         break;
 
         case NODE_IFELSE:
@@ -1823,7 +1855,7 @@ void print_node(Node *node)
     }
 }
 
-ParseResult parse(String src, Arena *a, char *errbuf, int errmax)
+ParseResult parse(String src, WL_Arena *a, char *errbuf, int errmax)
 {
     Parser p = {
         .s={ src.ptr, src.len, 0 },

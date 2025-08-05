@@ -1,15 +1,5 @@
-#include <stdlib.h>
-#include <string.h>
-
-#ifndef _WIN32
-#include <fcntl.h>
-#include <errno.h>
-#include <unistd.h>
-#include <limits.h>
-#include <sys/stat.h>
-#endif
-
 #ifndef WL_AMALGAMATION
+#include "includes.h"
 #include "file.h"
 #endif
 

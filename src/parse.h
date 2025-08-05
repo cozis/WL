@@ -1,9 +1,8 @@
 #ifndef WL_PARSE_INCLUDED
 #define WL_PARSE_INCLUDED
 
-#include <stdint.h>
-
 #ifndef WL_AMALGAMATION
+#include "includes.h"
 #include "basic.h"
 #endif
 
@@ -35,6 +34,7 @@ typedef enum {
     NODE_VALUE_FLOAT,
     NODE_VALUE_STR,
     NODE_VALUE_VAR,
+    NODE_VALUE_SYSVAR,
     NODE_VALUE_HTML,
     NODE_VALUE_ARRAY,
     NODE_VALUE_MAP,
@@ -83,6 +83,6 @@ typedef struct {
 } ParseResult;
 
 void print_node(Node *node);
-ParseResult parse(String src, Arena *a, char *errbuf, int errmax);
+ParseResult parse(String src, WL_Arena *a, char *errbuf, int errmax);
 
 #endif // WL_PARSE_INCLUDED

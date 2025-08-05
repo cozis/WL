@@ -1,7 +1,10 @@
 #ifndef WL_ASSEMBLE_INCLUDED
 #define WL_ASSEMBLE_INCLUDED
 
+#ifndef WL_AMALGAMATION
+#include "public.h"
 #include "parse.h"
+#endif
 
 enum {
     OPCODE_NOPE    = 0x00,
@@ -41,21 +44,18 @@ enum {
     OPCODE_INSERT2 = 0x19,
     OPCODE_SELECT  = 0x20,
     OPCODE_PRINT   = 0x24,
+    OPCODE_SYSVAR  = 0x2C,
+    OPCODE_SYSCALL = 0x2D,
 };
 
 typedef struct {
-    void *ptr;
-    int   len;
-} Program;
-
-typedef struct {
-    Program program;
+    WL_Program program;
     int errlen;
 } AssembleResult;
 
-int parse_program_header(Program p, String *code, String *data, char *errbuf, int errmax);
-void  print_program(Program program);
+int parse_program_header(WL_Program p, String *code, String *data, char *errbuf, int errmax);
+void  print_program(WL_Program program);
 char *print_instruction(char *p, char *data);
-AssembleResult assemble(Node *root, Arena *arena, char *errbuf, int errmax);
+AssembleResult assemble(Node *root, WL_Arena *arena, char *errbuf, int errmax);
 
 #endif // WL_ASSEMBLE_INCLUDED

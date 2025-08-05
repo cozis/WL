@@ -1,10 +1,6 @@
-#include <stdio.h>
-#include <stdarg.h>
-#include <stdlib.h>
-#include <string.h>
-#include <assert.h>
 
 #ifndef WL_AMALGAMATION
+#include "includes.h"
 #include "parse.h"
 #include "assemble.h"
 #endif
@@ -53,12 +49,12 @@ typedef struct {
     char *ptr;
     int   len;
     int   cap;
-    b32   err;
+    bool   err;
 } OutputBuffer;
 
 typedef struct {
 
-    Arena *a;
+    WL_Arena *a;
 
     OutputBuffer out;
 
@@ -232,7 +228,7 @@ Scope *parent_scope(Assembler *a)
     return scope;
 }
 
-b32 global_scope(Assembler *a)
+bool global_scope(Assembler *a)
 {
     return parent_scope(a)->type == SCOPE_GLOBAL;
 }
@@ -305,7 +301,7 @@ int declare_function(Assembler *a, String name, int off)
     return 0;
 }
 
-b32 is_expr(Node *node)
+bool is_expr(Node *node)
 {
     switch (node->type) {
 
@@ -331,6 +327,7 @@ b32 is_expr(Node *node)
         case NODE_VALUE_FLOAT:
         case NODE_VALUE_STR:
         case NODE_VALUE_VAR:
+        case NODE_VALUE_SYSVAR:
         case NODE_VALUE_HTML:
         case NODE_VALUE_ARRAY:
         case NODE_VALUE_MAP:
@@ -400,7 +397,7 @@ int pop_scope(Assembler *a)
     return 0;
 }
 
-void assemble_statement(Assembler *a, Node *node, b32 pop_expr);
+void assemble_statement(Assembler *a, Node *node, bool pop_expr);
 
 typedef struct {
     OutputBuffer tmp;
@@ -506,10 +503,35 @@ void assemble_expr(Assembler *a, Node *node, int num_results)
                 arg = arg->next;
             }
 
-            assert(func->type == NODE_VALUE_VAR);
+            if (func->type == NODE_VALUE_SYSVAR) {
 
-            append_u8(&a->out, OPCODE_CALL);
-            int p = append_u32(&a->out, 0);
+                String name = func->sval;
+                int off = add_string_literal(a, name);
+
+                append_u8(&a->out, OPCODE_SYSCALL);
+                append_u32(&a->out, off);
+                append_u32(&a->out, name.len);
+
+            } else {
+
+                assert(func->type == NODE_VALUE_VAR);
+
+                append_u8(&a->out, OPCODE_CALL);
+                int p = append_u32(&a->out, 0);
+
+                FunctionCall *call = alloc(a->a, sizeof(FunctionCall), _Alignof(FunctionCall));
+                if (call == NULL) {
+                    assembler_report(a, "Out of memory");
+                    return;
+                }
+                call->name = func->sval;
+                call->off = p;
+
+                Scope *scope = &a->scopes[a->num_scopes-1];
+
+                call->next = scope->calls;
+                scope->calls = call;
+            }
 
             if (num_results == 0)
                 append_u8(&a->out, OPCODE_GPOP);
@@ -519,19 +541,6 @@ void assemble_expr(Assembler *a, Node *node, int num_results)
             }
 
             append_u8(&a->out, OPCODE_GCOALESCE);
-
-            FunctionCall *call = alloc(a->a, sizeof(FunctionCall), _Alignof(FunctionCall));
-            if (call == NULL) {
-                assembler_report(a, "Out of memory");
-                return;
-            }
-            call->name = func->sval;
-            call->off = p;
-
-            Scope *scope = &a->scopes[a->num_scopes-1];
-
-            call->next = scope->calls;
-            scope->calls = call;
         }
         break;
 
@@ -751,7 +760,27 @@ void assemble_expr(Assembler *a, Node *node, int num_results)
 
             if (num_results == 0)
                 append_u8(&a->out, OPCODE_POP);
-            else if (num_results != -1) {
+            else if (num_results != -1 && num_results != 1) {
+                append_u8(&a->out, OPCODE_GROUP);
+                append_u8(&a->out, OPCODE_GTRUNC);
+                append_u32(&a->out, num_results-1);
+                append_u8(&a->out, OPCODE_GCOALESCE);
+            }
+        }
+        break;
+
+        case NODE_VALUE_SYSVAR:
+        {
+            String name = node->sval;
+            int off = add_string_literal(a, name);
+
+            append_u8(&a->out, OPCODE_SYSVAR);
+            append_u32(&a->out, off);
+            append_u32(&a->out, name.len);
+
+            if (num_results == 0)
+                append_u8(&a->out, OPCODE_POP);
+            else if (num_results != -1 && num_results != 1) {
                 append_u8(&a->out, OPCODE_GROUP);
                 append_u8(&a->out, OPCODE_GTRUNC);
                 append_u32(&a->out, num_results-1);
@@ -901,7 +930,7 @@ void assemble_expr(Assembler *a, Node *node, int num_results)
     }
 }
 
-void assemble_statement(Assembler *a, Node *node, b32 pop_expr)
+void assemble_statement(Assembler *a, Node *node, bool pop_expr)
 {
     switch (node->type) {
 
@@ -1131,13 +1160,16 @@ typedef struct {
     uint32_t data_size;
 } Header;
 
-AssembleResult assemble(Node *root, Arena *arena, char *errbuf, int errmax)
+AssembleResult assemble(Node *root, WL_Arena *arena, char *errbuf, int errmax)
 {
-    Assembler a = {0, .a=arena, .errbuf=errbuf, .errmax=errmax, .errlen=0};
+    Assembler a = {0};
+    a.errbuf = errbuf;
+    a.errmax = errmax;
+    a.a = arena;
 
     int ret = push_scope(&a, SCOPE_GLOBAL);
     if (ret < 0)
-        return (AssembleResult) { (Program) {0}, a.errlen };
+        return (AssembleResult) { (WL_Program) {0}, a.errlen };
 
     append_u8(&a.out, OPCODE_GROUP);
 
@@ -1158,7 +1190,7 @@ AssembleResult assemble(Node *root, Arena *arena, char *errbuf, int errmax)
 
     ret = pop_scope(&a);
     if (ret < 0)
-        return (AssembleResult) { (Program) {0}, a.errlen };
+        return (AssembleResult) { (WL_Program) {0}, a.errlen };
 
     OutputBuffer out = {0};
     append_u32(&out, 0xFEEDBEEF);    // magic
@@ -1168,10 +1200,10 @@ AssembleResult assemble(Node *root, Arena *arena, char *errbuf, int errmax)
     append_mem(&out, a.strings, a.strings_len);
 
     free(a.out.ptr);
-    return (AssembleResult) { (Program) { out.ptr, out.len }, a.errlen };
+    return (AssembleResult) { (WL_Program) { out.ptr, out.len }, a.errlen };
 }
 
-int parse_program_header(Program p, String *code, String *data, char *errbuf, int errmax)
+int parse_program_header(WL_Program p, String *code, String *data, char *errbuf, int errmax)
 {
     if ((uint32_t) p.len < 3 * sizeof(uint32_t)) {
         snprintf(errbuf, errmax, "Invalid program");
@@ -1200,7 +1232,7 @@ int parse_program_header(Program p, String *code, String *data, char *errbuf, in
     return 0;
 }
 
-void print_program(Program program)
+void print_program(WL_Program program)
 {
     String code;
     String data;
@@ -1459,6 +1491,34 @@ char *print_instruction(char *p, char *data)
 
         case OPCODE_PRINT:
         printf("PRINT");
+        break;
+
+        case OPCODE_SYSVAR:
+        {
+            uint32_t off;
+            memcpy(&off, p, sizeof(uint32_t));
+            p += sizeof(uint32_t);
+
+            uint32_t len;
+            memcpy(&len, p, sizeof(uint32_t));
+            p += sizeof(uint32_t);
+
+            printf("SYSVAR \"%.*s\"", (int) len, (char*) data + off);
+        }
+        break;
+
+        case OPCODE_SYSCALL:
+        {
+            uint32_t off;
+            memcpy(&off, p, sizeof(uint32_t));
+            p += sizeof(uint32_t);
+
+            uint32_t len;
+            memcpy(&len, p, sizeof(uint32_t));
+            p += sizeof(uint32_t);
+
+            printf("SYSCALL \"%.*s\"", (int) len, (char*) data + off);
+        }
         break;
     }
 
