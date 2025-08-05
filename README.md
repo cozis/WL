@@ -1,5 +1,5 @@
 # WL
-WL is the proof of concept for a powerful and flexible templating language for the web.
+WL is the proof of concept for a powerful and flexible templating language for the web. All functionality is implemented, but is still missing some polish.
 
 Here's an example template in WL with a recursive comment view element:
 ```html
