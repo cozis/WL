@@ -3,11 +3,12 @@ WL is a powerful and flexible templating language for the web.
 
 Here's an example template in WL with a recursive comment view element:
 ```html
-posts = [
+let posts = [
     {
         author: "UserA",
         title: "I'm the first post",
         content: "Sup everyone!",
+        date: "1 Jan 2025",
         comments: [
             {
                 author: "UserB",

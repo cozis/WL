@@ -49,6 +49,7 @@ int main(int argc, char **argv)
 
             case WL_ERROR:
             done = true;
+            printf("%s\n", err);
             break;
 
             case WL_VAR:
