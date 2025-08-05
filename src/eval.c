@@ -41,6 +41,8 @@ struct WL_State {
     String sysvar;
     String syscall;
     bool syscall_error;
+    int stack_before_user;
+    int stack_base_for_user;
 };
 
 void eval_report(WL_State *state, char *fmt, ...)
@@ -785,7 +787,8 @@ int step(WL_State *state)
 
                 Value *src = array_select(set, key);
                 if (src == NULL) {
-                    assert(0); // TODO
+                    eval_report(state, "Index out of range");
+                    return -1;
                 }
                 r = *src;
 
@@ -793,7 +796,8 @@ int step(WL_State *state)
 
                 int ret = map_select(set, key, &r);
                 if (ret < 0) {
-                    assert(0); // TODO
+                    eval_report(state, "Key not contained in map");
+                    return -1;
                 }
 
             } else {
@@ -818,6 +822,8 @@ int step(WL_State *state)
             String name = { state->data.ptr + off, len };
 
             state->sysvar = name;
+            state->stack_before_user = state->eval_depth;
+            state->stack_base_for_user = state->groups[state->num_groups-1];
         }
         break;
 
@@ -827,7 +833,72 @@ int step(WL_State *state)
             uint32_t len = read_u32(state);
             String name = { state->data.ptr + off, len };
 
+            int num_args = state->eval_depth - state->groups[state->num_groups-1];
+
+            Value v = make_int(state->a, num_args);
+            if (v == VALUE_ERROR) {
+                assert(0); // TODO
+            }
+            state->eval_stack[state->eval_depth++] = v;
+
             state->syscall = name;
+            state->stack_before_user = state->eval_depth;
+            state->stack_base_for_user = state->groups[state->num_groups-1];
+        }
+        break;
+
+        case OPCODE_FOR:
+        {
+            uint8_t  var_3 = read_u8(state);
+            uint8_t  var_1 = read_u8(state);
+            uint8_t  var_2 = read_u8(state);
+            uint32_t end   = read_u32(state);
+
+            int base;
+            {
+                int group = state->frames[state->num_frames-1].group;
+                base  = state->groups[group];
+            }
+
+            int64_t idx;
+            {
+                Value idx_val = state->eval_stack[base + var_2];
+                if (type_of(idx_val) != TYPE_INT) {
+                    assert(0); // TODO
+                }
+                idx = get_int(idx_val);
+            }
+
+            Value set = state->eval_stack[base + var_3];
+
+            Type set_type = type_of(set);
+            if (set_type == TYPE_ARRAY) {
+
+                if (value_length(set) == idx) {
+                    state->off = end;
+                    break;
+                }
+
+                state->eval_stack[base + var_1] = *array_select(set, idx);
+
+            } else if (set_type == TYPE_MAP) {
+
+                if (value_length(set) == idx) {
+                    state->off = end;
+                    break;
+                }
+
+                state->eval_stack[base + var_1] = *map_select_by_index(set, idx);
+
+            } else {
+                assert(0); // TODO
+            }
+
+            Value v = make_int(state->a, idx + 1);
+            if (v == VALUE_ERROR) {
+                assert(0); // TODO
+            }
+            state->eval_stack[base + var_2] = v;
         }
         break;
 
@@ -886,7 +957,6 @@ WL_Result WL_eval(WL_State *state)
         if (state->syscall_error)
             return (WL_Result) { WL_ERROR, (WL_String) { NULL, 0 } };
 
-        // TODO
         state->sysvar = S("");
     }
 
@@ -894,6 +964,18 @@ WL_Result WL_eval(WL_State *state)
 
         if (state->syscall_error)
             return (WL_Result) { WL_ERROR, (WL_String) { NULL, 0 } };
+
+        int group = state->groups[state->num_groups-1];
+
+        Value v = state->eval_stack[--state->eval_depth];
+        if (type_of(v) != TYPE_INT) {
+            assert(0); // TODO
+        }
+        int64_t num_rets = get_int(v);
+        for (int i = 0; i < num_rets; i++)
+            state->eval_stack[group + i] = state->eval_stack[state->eval_depth - num_rets + i];
+
+        state->eval_depth = group + num_rets;
 
         state->syscall = S("");
     }
@@ -947,11 +1029,86 @@ static bool in_syscall(WL_State *state)
     return (state->syscall.len > 0 || state->sysvar.len > 0) && !state->syscall_error;
 }
 
+int WL_peeknone(WL_State *state, int off)
+{
+    if (!in_syscall(state)) return 0;
+
+    if (state->eval_depth + off < state->stack_base_for_user || off >= 0)
+        return 0;
+
+    Value v = state->eval_stack[state->eval_depth + off];
+    if (type_of(v) != TYPE_NONE)
+        return 0;
+
+    return 1;
+}
+
+int WL_peekint(WL_State *state, int off, long long *x)
+{
+    if (!in_syscall(state)) return 0;
+
+    if (state->eval_depth + off < state->stack_base_for_user || off >= 0)
+        return 0;
+
+    Value v = state->eval_stack[state->eval_depth + off];
+    if (type_of(v) != TYPE_INT)
+        return 0;
+
+    *x = get_int(v);
+    return 1;
+}
+
+int WL_peekfloat(WL_State *state, int off, float *x)
+{
+    if (!in_syscall(state)) return 0;
+
+    if (state->eval_depth + off < state->stack_base_for_user || off >= 0)
+        return 0;
+
+    Value v = state->eval_stack[state->eval_depth + off];
+    if (type_of(v) != TYPE_FLOAT)
+        return 0;
+
+    *x = get_float(v);
+    return 1;
+}
+
+int WL_peekstr(WL_State *state, int off, WL_String *str)
+{
+    if (!in_syscall(state)) return 0;
+
+    if (state->eval_depth + off < state->stack_base_for_user || off >= 0)
+        return 0;
+
+    Value v = state->eval_stack[state->eval_depth + off];
+    if (type_of(v) != TYPE_STRING)
+        return 0;
+
+    String s = get_str(v);
+    *str = (WL_String) { s.ptr, s.len };
+    return 1;
+}
+
+int WL_popnone(WL_State *state)
+{
+    if (!in_syscall(state)) return 0;
+
+    if (state->eval_depth == state->stack_base_for_user)
+        return 0;
+
+    Value v = state->eval_stack[state->eval_depth-1];
+    if (type_of(v) != TYPE_NONE)
+        return 0;
+
+    state->eval_depth--;
+    return 1;
+}
+
 int WL_popint(WL_State *state, long long *x)
 {
     if (!in_syscall(state)) return 0;
 
-    if (state->eval_depth == 0)
+    if (state->eval_depth == state->stack_base_for_user)
         return 0;
 
     Value v = state->eval_stack[state->eval_depth-1];
@@ -961,14 +1118,14 @@ int WL_popint(WL_State *state, long long *x)
     *x = get_int(v);
 
     state->eval_depth--;
-    return true;
+    return 1;
 }
 
 int WL_popfloat(WL_State *state, float *x)
 {
     if (!in_syscall(state)) return 0;
 
-    if (state->eval_depth == 0)
+    if (state->eval_depth == state->stack_base_for_user)
         return 0;
 
     Value v = state->eval_stack[state->eval_depth-1];
@@ -978,14 +1135,14 @@ int WL_popfloat(WL_State *state, float *x)
     *x = get_float(v);
 
     state->eval_depth--;
-    return true;
+    return 1;
 }
 
-int WL_popstr(WL_State *state, char **str, int *len)
+int WL_popstr(WL_State *state, WL_String *str)
 {
     if (!in_syscall(state)) return 0;
 
-    if (state->eval_depth == 0)
+    if (state->eval_depth == state->stack_base_for_user)
         return 0;
 
     Value v = state->eval_stack[state->eval_depth-1];
@@ -993,11 +1150,10 @@ int WL_popstr(WL_State *state, char **str, int *len)
         return 0;
 
     String s = get_str(v);
-    *str = s.ptr;
-    *len = s.len;
+    *str = (WL_String) { s.ptr, s.len };
 
     state->eval_depth--;
-    return true;
+    return 1;
 }
 
 int WL_popany(WL_State *state)
@@ -1005,7 +1161,7 @@ int WL_popany(WL_State *state)
     if (!in_syscall(state))
         return 0;
 
-    if (state->eval_depth == 0)
+    if (state->eval_depth == state->stack_base_for_user)
         return 0;
 
     state->eval_depth--;
@@ -1014,7 +1170,45 @@ int WL_popany(WL_State *state)
 
 void WL_select(WL_State *state)
 {
-    // TODO
+    Value key = state->eval_stack[--state->eval_depth];
+    Value set = state->eval_stack[state->eval_depth-1];
+    Value val;
+
+    Type set_type = type_of(set);
+    if (set_type == TYPE_ARRAY) {
+
+        Type key_type = type_of(key);
+        if (key_type != TYPE_INT) {
+            assert(0); // TODO
+        }
+
+        int64_t idx = get_int(key);
+        Value *src = array_select(set, idx);
+        if (src == NULL) {
+            assert(0); // TODO
+        }
+        val = *src;
+
+    } else if (set_type == TYPE_MAP) {
+
+        int ret = map_select(set, key, &val);
+        if (ret < 0) {
+            assert(0); // TODO
+        }
+
+    } else {
+
+        assert(0); // TODO
+    }
+
+    state->eval_stack[state->eval_depth++] = val;
+}
+
+void WL_pushnone(WL_State *state)
+{
+    if (!in_syscall(state)) return;
+
+    state->eval_stack[state->eval_depth++] = VALUE_NONE;
 }
 
 void WL_pushint(WL_State *state, long long x)
@@ -1045,11 +1239,11 @@ void WL_pushfloat(WL_State *state, float x)
     state->eval_stack[state->eval_depth++] = v;
 }
 
-void WL_pushstr(WL_State *state, char *str, int len)
+void WL_pushstr(WL_State *state, WL_String str)
 {
     if (!in_syscall(state)) return;
 
-    Value v = make_str(state->a, (String) { str, len });
+    Value v = make_str(state->a, (String) { str.ptr, str.len });
     if (v == VALUE_ERROR) {
         eval_report(state, "Out of memory");
         state->syscall_error = true;
@@ -1091,5 +1285,49 @@ void WL_pushmap(WL_State *state, int cap)
 
 void WL_insert(WL_State *state)
 {
-    // TODO
+    Value key = state->eval_stack[--state->eval_depth];
+    Value val = state->eval_stack[--state->eval_depth];
+    Value set = state->eval_stack[state->eval_depth-1];
+
+    Type set_type = type_of(set);
+    if (set_type == TYPE_ARRAY) {
+
+        Type key_type = type_of(key);
+        if (key_type != TYPE_INT) {
+            assert(0); // TODO
+        }
+
+        int64_t idx = get_int(key);
+        Value *dst = array_select(set, idx);
+        if (dst == NULL) {
+            assert(0); // TODO
+        }
+        *dst = val;
+
+    } else if (set_type == TYPE_MAP) {
+
+        int ret = map_insert(state->a, set, key, val);
+        if (ret < 0) {
+            assert(0); // TODO
+        }
+
+    } else {
+
+        assert(0); // TODO
+    }
+}
+
+void WL_append(WL_State *state)
+{
+    Value val = state->eval_stack[--state->eval_depth];
+    Value set = state->eval_stack[state->eval_depth-1];
+
+    if (type_of(set) != TYPE_ARRAY) {
+        assert(0); // TODO
+        return;
+    }
+
+    if (array_append(state->a, set, val) < 0) {
+        assert(0); // TODO
+    }
 }

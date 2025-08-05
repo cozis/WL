@@ -235,6 +235,9 @@ bool global_scope(Assembler *a)
 
 Symbol *find_symbol_in_local_scope(Assembler *a, String name)
 {
+    if (name.len == 0)
+        return NULL;
+
     Scope *scope = &a->scopes[a->num_scopes-1];
     for (int i = a->num_syms-1; i >= scope->sym_base; i--)
         if (streq(a->syms[i].name, name))
@@ -244,6 +247,9 @@ Symbol *find_symbol_in_local_scope(Assembler *a, String name)
 
 Symbol *find_symbol_in_function(Assembler *a, String name)
 {
+    if (name.len == 0)
+        return NULL;
+
     Scope *scope = parent_scope(a);
     for (int i = a->num_syms-1; i >= scope->sym_base; i--)
         if (streq(a->syms[i].name, name))
@@ -1131,17 +1137,34 @@ void assemble_statement(Assembler *a, Node *node, bool pop_expr)
 
         case NODE_FOR:
         {
-            assemble_expr(a, node->for_set, 1);
-
-            // TODO
-
             int ret = push_scope(a, SCOPE_FOR);
             if (ret < 0) return;
 
-            declare_variable(a, node->for_var1);
-            declare_variable(a, node->for_var2);
+            int var_1 = declare_variable(a, node->for_var1);
+            int var_2 = declare_variable(a, node->for_var2);
+            int var_3 = declare_variable(a, (String) { NULL, 0 });
+
+            assemble_expr(a, node->for_set, 1);
+            append_u8(&a->out, OPCODE_SETV);
+            append_u8(&a->out, var_3);
+
+            append_u8(&a->out, OPCODE_PUSHI);
+            append_s64(&a->out, 0);
+            append_u8(&a->out, OPCODE_SETV);
+            append_u8(&a->out, var_2);
+
+            int start = append_u8(&a->out, OPCODE_FOR);
+            append_u8(&a->out, var_3);
+            append_u8(&a->out, var_1);
+            append_u8(&a->out, var_2);
+            int p = append_u32(&a->out, 0);
 
             assemble_statement(a, node->left, pop_expr);
+
+            append_u8(&a->out, OPCODE_JUMP);
+            append_u32(&a->out, start);
+
+            patch_with_current_offset(&a->out, p);
 
             ret = pop_scope(a);
             if (ret < 0) return;

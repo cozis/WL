@@ -1,2 +1,6 @@
+let set = {a: "G", b: "T", c: "K"}
 
-$do_something(1, 2, 3)
+for item, i in set: {
+    <li>\item \i \set[item]</li>
+    "\n"
+}

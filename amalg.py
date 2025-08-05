@@ -13,7 +13,7 @@ class Amalgamator:
         self.out += "// " + file + "\n"
         self.out += "////////////////////////////////////////////////////////////////////////////////////////\n"
         self.out += "\n"
-        self.out += "#line 1 \"" + file + "\"\n"
+        # self.out += "#line 1 \"" + file + "\"\n"
         self.out += open(file).read()
 
         if len(self.out) > 0 and self.out[len(self.out)-1] != '\n':

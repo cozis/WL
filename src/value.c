@@ -160,6 +160,7 @@ Value make_map(WL_Arena *a)
     m->count = 0;
     m->tail_count = 0;
     m->tail = &m->head;
+    m->head.next = NULL;
 
     return (Value) m | 7;
 }
@@ -174,6 +175,7 @@ Value make_array(WL_Arena *a)
     v->count = 0;
     v->tail_count = 0;
     v->tail = &v->head;
+    v->head.next = NULL;
 
     return (Value) v | 7;
 }
@@ -200,6 +202,27 @@ int map_select(Value map, Value key, Value *val)
     return -1;
 }
 
+Value *map_select_by_index(Value map, int key)
+{
+    MapValue *p = get_map(map);
+    MapItems *batch = &p->head;
+    int cursor = 0;
+    while (batch) {
+
+        int num = ITEMS_PER_MAP_BATCH;
+        if (batch->next == NULL)
+            num = p->tail_count;
+
+        if (cursor <= key && key < cursor + num)
+            return &batch->keys[key - cursor];
+
+        batch = batch->next;
+        cursor += num;
+    }
+
+    return NULL;
+}
+
 int map_insert(WL_Arena *a, Value map, Value key, Value val)
 {
     MapValue *p = get_map(map);
@@ -210,6 +233,8 @@ int map_insert(WL_Arena *a, Value map, Value key, Value val)
             return -1;
 
         batch->next = NULL;
+        if (p->tail)
+            p->tail->next = batch;
         p->tail = batch;
         p->tail_count = 0;
     }
@@ -252,6 +277,9 @@ int array_append(WL_Arena *a, Value array, Value val)
             return -1;
 
         batch->next = NULL;
+
+        if (p->tail)
+            p->tail->next = batch;
         p->tail = batch;
         p->tail_count = 0;
     }
@@ -338,6 +366,19 @@ bool valgrt(Value a, Value b)
     return false;
 }
 
+int value_length(Value v)
+{
+    Type type = type_of(v);
+
+    if (type == TYPE_ARRAY)
+        return get_array(v)->count;
+
+    if (type == TYPE_MAP)
+        return get_map(v)->count;
+
+    return -1;
+}
+
 typedef struct {
     char *dst;
     int   max;
@@ -380,7 +421,7 @@ static void value_to_string_inner(Value v, ToStringContext *tostr)
     switch (type_of(v)) {
 
         case TYPE_NONE:
-        tostr_appends(tostr, S("none"));
+        //tostr_appends(tostr, S("none"));
         break;
 
         case TYPE_BOOL:
@@ -411,12 +452,14 @@ static void value_to_string_inner(Value v, ToStringContext *tostr)
                     value_to_string_inner(batch->keys[i], tostr);
                     tostr_appends(tostr, S(": "));
                     value_to_string_inner(batch->items[i], tostr);
-                    tostr_appends(tostr, S(", "));
+                    
+                    if (batch->next != NULL || i+1 < num)
+                        tostr_appends(tostr, S(", "));
                 }
 
                 batch = batch->next;
             }
-            tostr_appends(tostr, S("}"));
+            tostr_appends(tostr, S(" }"));
         }
         break;
 

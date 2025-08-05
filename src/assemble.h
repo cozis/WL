@@ -46,6 +46,7 @@ enum {
     OPCODE_PRINT   = 0x24,
     OPCODE_SYSVAR  = 0x2C,
     OPCODE_SYSCALL = 0x2D,
+    OPCODE_FOR     = 0x2E,
 };
 
 typedef struct {
