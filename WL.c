@@ -379,6 +379,7 @@ struct Node {
 
     Node *params;
     Node *child;
+    bool  no_body;
 
     Node *cond;
 
@@ -1006,6 +1007,7 @@ Node *parse_html(Parser *p)
     parent->tagname = tagname;
     parent->params = param_head;
     parent->child  = head;
+    parent->no_body = no_body;
 
     return parent;
 }
@@ -2801,40 +2803,49 @@ void assemble_html_2(Assembler *a, HTMLAssembler *ha, Node *node)
 
         if (value) {
             append_u8(&ha->tmp, '=');
+            append_u8(&ha->tmp, '"');
 
             if (value->type == NODE_VALUE_STR) {
-                append_u8(&ha->tmp, '"');
                 append_mem(&ha->tmp,
                     value->sval.ptr, // TODO: escape
                     value->sval.len
                 );
-                append_u8(&ha->tmp, '"');
             } else {
                 write_buffered_html(a, ha);
                 assemble_statement(a, value, false);
             }
+
+            append_u8(&ha->tmp, '"');
         }
         attr = attr->next;
     }
-    append_u8(&ha->tmp, '>');
 
-    Node *child = node->child;
-    while (child) {
-        if (child->type == NODE_VALUE_STR)
-            append_mem(&ha->tmp, child->sval.ptr, child->sval.len);
-        else if (child->type == NODE_VALUE_HTML)
-            assemble_html_2(a, ha, child);
-        else {
-            write_buffered_html(a, ha);
-            assemble_statement(a, child, false);
+    if (node->no_body) {
+        append_u8(&ha->tmp, ' ');
+        append_u8(&ha->tmp, '/');
+        append_u8(&ha->tmp, '>');
+    } else {
+
+        append_u8(&ha->tmp, '>');
+
+        Node *child = node->child;
+        while (child) {
+            if (child->type == NODE_VALUE_STR)
+                append_mem(&ha->tmp, child->sval.ptr, child->sval.len);
+            else if (child->type == NODE_VALUE_HTML)
+                assemble_html_2(a, ha, child);
+            else {
+                write_buffered_html(a, ha);
+                assemble_statement(a, child, false);
+            }
+            child = child->next;
         }
-        child = child->next;
-    }
 
-    append_u8(&ha->tmp, '<');
-    append_u8(&ha->tmp, '/');
-    append_mem(&ha->tmp, node->tagname.ptr, node->tagname.len);
-    append_u8(&ha->tmp, '>');
+        append_u8(&ha->tmp, '<');
+        append_u8(&ha->tmp, '/');
+        append_mem(&ha->tmp, node->tagname.ptr, node->tagname.len);
+        append_u8(&ha->tmp, '>');
+    }
 }
 
 void assemble_html(Assembler *a, Node *node)
@@ -3337,6 +3348,7 @@ void assemble_statement(Assembler *a, Node *node, bool pop_expr)
 
                 assert(off == idx);
 
+                idx++;
                 arg = arg->next;
             }
 
@@ -4218,7 +4230,7 @@ Value *array_select(Value array, int key)
     int cursor = 0;
     while (batch) {
 
-        int num = ITEMS_PER_MAP_BATCH;
+        int num = ITEMS_PER_ARRAY_BATCH;
         if (batch->next == NULL)
             num = p->tail_count;
 
@@ -4235,7 +4247,7 @@ Value *array_select(Value array, int key)
 int array_append(WL_Arena *a, Value array, Value val)
 {
     ArrayValue *p = get_array(array);
-    if (p->tail_count == ITEMS_PER_MAP_BATCH) {
+    if (p->tail_count == ITEMS_PER_ARRAY_BATCH) {
 
         ArrayItems *batch = alloc(a, (int) sizeof(ArrayItems), _Alignof(ArrayItems));
         if (batch == NULL)
@@ -5210,7 +5222,12 @@ int step(WL_State *state)
 
             if (type_of(set) == TYPE_ARRAY) {
 
-                Value *dst = array_select(set, key);
+                if (type_of(key) != TYPE_INT) {
+                    assert(0); // TODO
+                }
+                int64_t idx = get_int(key);
+
+                Value *dst = array_select(set, idx);
                 if (dst == NULL) {
                     eval_report(state, "Index out of range");
                     return -1;
@@ -5241,7 +5258,12 @@ int step(WL_State *state)
 
             if (type_of(set) == TYPE_ARRAY) {
 
-                Value *dst = array_select(set, key);
+                if (type_of(key) != TYPE_INT) {
+                    assert(0); // TODO
+                }
+                int64_t idx = get_int(key);
+
+                Value *dst = array_select(set, idx);
                 if (dst == NULL) {
                     eval_report(state, "Index out of range");
                     return -1;
@@ -5272,7 +5294,12 @@ int step(WL_State *state)
             Value r;
             if (type_of(set) == TYPE_ARRAY) {
 
-                Value *src = array_select(set, key);
+                if (type_of(key) != TYPE_INT) {
+                    assert(0); // TODO
+                }
+                int64_t idx = get_int(key);
+
+                Value *src = array_select(set, idx);
                 if (src == NULL) {
                     eval_report(state, "Index out of range");
                     return -1;

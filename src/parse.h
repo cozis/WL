@@ -58,6 +58,7 @@ struct Node {
 
     Node *params;
     Node *child;
+    bool  no_body;
 
     Node *cond;
 

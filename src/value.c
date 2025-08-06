@@ -253,7 +253,7 @@ Value *array_select(Value array, int key)
     int cursor = 0;
     while (batch) {
 
-        int num = ITEMS_PER_MAP_BATCH;
+        int num = ITEMS_PER_ARRAY_BATCH;
         if (batch->next == NULL)
             num = p->tail_count;
 
@@ -270,7 +270,7 @@ Value *array_select(Value array, int key)
 int array_append(WL_Arena *a, Value array, Value val)
 {
     ArrayValue *p = get_array(array);
-    if (p->tail_count == ITEMS_PER_MAP_BATCH) {
+    if (p->tail_count == ITEMS_PER_ARRAY_BATCH) {
 
         ArrayItems *batch = alloc(a, (int) sizeof(ArrayItems), _Alignof(ArrayItems));
         if (batch == NULL)

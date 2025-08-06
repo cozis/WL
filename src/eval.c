@@ -723,7 +723,12 @@ int step(WL_State *state)
 
             if (type_of(set) == TYPE_ARRAY) {
 
-                Value *dst = array_select(set, key);
+                if (type_of(key) != TYPE_INT) {
+                    assert(0); // TODO
+                }
+                int64_t idx = get_int(key);
+
+                Value *dst = array_select(set, idx);
                 if (dst == NULL) {
                     eval_report(state, "Index out of range");
                     return -1;
@@ -754,7 +759,12 @@ int step(WL_State *state)
 
             if (type_of(set) == TYPE_ARRAY) {
 
-                Value *dst = array_select(set, key);
+                if (type_of(key) != TYPE_INT) {
+                    assert(0); // TODO
+                }
+                int64_t idx = get_int(key);
+
+                Value *dst = array_select(set, idx);
                 if (dst == NULL) {
                     eval_report(state, "Index out of range");
                     return -1;
@@ -785,7 +795,12 @@ int step(WL_State *state)
             Value r;
             if (type_of(set) == TYPE_ARRAY) {
 
-                Value *src = array_select(set, key);
+                if (type_of(key) != TYPE_INT) {
+                    assert(0); // TODO
+                }
+                int64_t idx = get_int(key);
+
+                Value *src = array_select(set, idx);
                 if (src == NULL) {
                     eval_report(state, "Index out of range");
                     return -1;

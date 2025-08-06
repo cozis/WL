@@ -441,40 +441,49 @@ void assemble_html_2(Assembler *a, HTMLAssembler *ha, Node *node)
 
         if (value) {
             append_u8(&ha->tmp, '=');
+            append_u8(&ha->tmp, '"');
 
             if (value->type == NODE_VALUE_STR) {
-                append_u8(&ha->tmp, '"');
                 append_mem(&ha->tmp,
                     value->sval.ptr, // TODO: escape
                     value->sval.len
                 );
-                append_u8(&ha->tmp, '"');
             } else {
                 write_buffered_html(a, ha);
                 assemble_statement(a, value, false);
             }
+
+            append_u8(&ha->tmp, '"');
         }
         attr = attr->next;
     }
-    append_u8(&ha->tmp, '>');
 
-    Node *child = node->child;
-    while (child) {
-        if (child->type == NODE_VALUE_STR)
-            append_mem(&ha->tmp, child->sval.ptr, child->sval.len);
-        else if (child->type == NODE_VALUE_HTML)
-            assemble_html_2(a, ha, child);
-        else {
-            write_buffered_html(a, ha);
-            assemble_statement(a, child, false);
+    if (node->no_body) {
+        append_u8(&ha->tmp, ' ');
+        append_u8(&ha->tmp, '/');
+        append_u8(&ha->tmp, '>');
+    } else {
+
+        append_u8(&ha->tmp, '>');
+
+        Node *child = node->child;
+        while (child) {
+            if (child->type == NODE_VALUE_STR)
+                append_mem(&ha->tmp, child->sval.ptr, child->sval.len);
+            else if (child->type == NODE_VALUE_HTML)
+                assemble_html_2(a, ha, child);
+            else {
+                write_buffered_html(a, ha);
+                assemble_statement(a, child, false);
+            }
+            child = child->next;
         }
-        child = child->next;
-    }
 
-    append_u8(&ha->tmp, '<');
-    append_u8(&ha->tmp, '/');
-    append_mem(&ha->tmp, node->tagname.ptr, node->tagname.len);
-    append_u8(&ha->tmp, '>');
+        append_u8(&ha->tmp, '<');
+        append_u8(&ha->tmp, '/');
+        append_mem(&ha->tmp, node->tagname.ptr, node->tagname.len);
+        append_u8(&ha->tmp, '>');
+    }
 }
 
 void assemble_html(Assembler *a, Node *node)
@@ -977,6 +986,7 @@ void assemble_statement(Assembler *a, Node *node, bool pop_expr)
 
                 assert(off == idx);
 
+                idx++;
                 arg = arg->next;
             }
 

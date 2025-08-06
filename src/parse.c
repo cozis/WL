@@ -592,6 +592,7 @@ Node *parse_html(Parser *p)
     parent->tagname = tagname;
     parent->params = param_head;
     parent->child  = head;
+    parent->no_body = no_body;
 
     return parent;
 }
