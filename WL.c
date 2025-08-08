@@ -351,6 +351,7 @@ typedef enum {
     NODE_INCLUDE,
     NODE_SELECT,
     NODE_NESTED,
+    NODE_OPER_LEN,
     NODE_OPER_POS,
     NODE_OPER_NEG,
     NODE_OPER_ASS,
@@ -459,6 +460,7 @@ typedef enum {
     TOKEN_KWORD_TRUE,
     TOKEN_KWORD_FALSE,
     TOKEN_KWORD_INCLUDE,
+    TOKEN_KWORD_LEN,
     TOKEN_VALUE_FLOAT,
     TOKEN_VALUE_INT,
     TOKEN_VALUE_STR,
@@ -550,6 +552,7 @@ String tok2str(Token token, char *buf, int max)
         case TOKEN_KWORD_TRUE: return S("true");
         case TOKEN_KWORD_FALSE: return S("false");
         case TOKEN_KWORD_INCLUDE: return S("include");
+        case TOKEN_KWORD_LEN: return S("len");
 
         case TOKEN_VALUE_FLOAT:
         {
@@ -676,18 +679,19 @@ Token next_token(Parser *p)
             p->s.cur - start
         };
 
-        if (streq(kword, S("if")))    return (Token) { .type=TOKEN_KWORD_IF };
-        if (streq(kword, S("else")))  return (Token) { .type=TOKEN_KWORD_ELSE };
-        if (streq(kword, S("while"))) return (Token) { .type=TOKEN_KWORD_WHILE };
-        if (streq(kword, S("for")))   return (Token) { .type=TOKEN_KWORD_FOR };
-        if (streq(kword, S("in")))    return (Token) { .type=TOKEN_KWORD_IN };
-        if (streq(kword, S("fun")))   return (Token) { .type=TOKEN_KWORD_FUN };
-        if (streq(kword, S("let")))   return (Token) { .type=TOKEN_KWORD_LET };
-        if (streq(kword, S("print"))) return (Token) { .type=TOKEN_KWORD_PRINT };
-        if (streq(kword, S("none")))  return (Token) { .type=TOKEN_KWORD_NONE };
-        if (streq(kword, S("true")))  return (Token) { .type=TOKEN_KWORD_TRUE };
-        if (streq(kword, S("false"))) return (Token) { .type=TOKEN_KWORD_FALSE };
+        if (streq(kword, S("if")))      return (Token) { .type=TOKEN_KWORD_IF      };
+        if (streq(kword, S("else")))    return (Token) { .type=TOKEN_KWORD_ELSE    };
+        if (streq(kword, S("while")))   return (Token) { .type=TOKEN_KWORD_WHILE   };
+        if (streq(kword, S("for")))     return (Token) { .type=TOKEN_KWORD_FOR     };
+        if (streq(kword, S("in")))      return (Token) { .type=TOKEN_KWORD_IN      };
+        if (streq(kword, S("fun")))     return (Token) { .type=TOKEN_KWORD_FUN     };
+        if (streq(kword, S("let")))     return (Token) { .type=TOKEN_KWORD_LET     };
+        if (streq(kword, S("print")))   return (Token) { .type=TOKEN_KWORD_PRINT   };
+        if (streq(kword, S("none")))    return (Token) { .type=TOKEN_KWORD_NONE    };
+        if (streq(kword, S("true")))    return (Token) { .type=TOKEN_KWORD_TRUE    };
+        if (streq(kword, S("false")))   return (Token) { .type=TOKEN_KWORD_FALSE   };
         if (streq(kword, S("include"))) return (Token) { .type=TOKEN_KWORD_INCLUDE };
+        if (streq(kword, S("len")))     return (Token) { .type=TOKEN_KWORD_LEN     };
 
         return (Token) { .type=TOKEN_IDENT, .sval=kword };
     }
@@ -1243,6 +1247,23 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             parent->type = NODE_OPER_NEG;
+            parent->left = child;
+
+            ret = parent;
+        }
+        break;
+
+        case TOKEN_KWORD_LEN:
+        {
+            Node *child = parse_atom(p);
+            if (child == NULL)
+                return NULL;
+
+            Node *parent = alloc_node(p);
+            if (parent == NULL)
+                return NULL;
+
+            parent->type = NODE_OPER_LEN;
             parent->left = child;
 
             ret = parent;
@@ -2046,6 +2067,12 @@ void print_node(Node *node)
         }
         break;
 
+        case NODE_OPER_LEN:
+        printf("len(");
+        print_node(node->left);
+        printf(")");
+        break;
+
         case NODE_OPER_POS:
         printf("(");
         printf("+");
@@ -2420,6 +2447,7 @@ enum {
     OPCODE_FOR     = 0x2E,
     OPCODE_PUSHT   = 0x2F,
     OPCODE_PUSHFL  = 0x30,
+    OPCODE_LEN     = 0x31,
 };
 
 typedef struct {
@@ -2757,6 +2785,7 @@ bool is_expr(Node *node)
         case NODE_SELECT:
         case NODE_NESTED:
         case NODE_FUNC_CALL:
+        case NODE_OPER_LEN:
         case NODE_OPER_POS:
         case NODE_OPER_NEG:
         case NODE_OPER_ASS:
@@ -2998,6 +3027,20 @@ void assemble_expr(Assembler *a, Node *node, int num_results)
                 append_u32(&a->out, num_results);
             }
 
+            append_u8(&a->out, OPCODE_GCOALESCE);
+        }
+        break;
+
+        case NODE_OPER_LEN:
+        assemble_expr(a, node->left, 1);
+        append_u8(&a->out, OPCODE_LEN);
+
+        if (num_results == 0)
+            append_u8(&a->out, OPCODE_POP);
+        else if (num_results != -1 && num_results != 1) {
+            append_u8(&a->out, OPCODE_GROUP);
+            append_u8(&a->out, OPCODE_GTRUNC);
+            append_u32(&a->out, num_results-1);
             append_u8(&a->out, OPCODE_GCOALESCE);
         }
         break;
@@ -5526,8 +5569,6 @@ int step(WL_State *state)
             uint8_t  var_2 = read_u8(state);
             uint32_t end   = read_u32(state);
 
-            printf("for end %u\n", end); // TODO
-
             int base;
             {
                 int group = state->frames[state->num_frames-1].group;
@@ -5573,6 +5614,24 @@ int step(WL_State *state)
                 assert(0); // TODO
             }
             state->eval_stack[base + var_2] = v;
+        }
+        break;
+
+        case OPCODE_LEN:
+        {
+            Value set = state->eval_stack[state->eval_depth-1];
+
+            Type type = type_of(set);
+            if (type != TYPE_ARRAY && type != TYPE_MAP) {
+                assert(0); // TODO
+            }
+
+            Value len = make_int(state->a, value_length(set));
+            if (len == VALUE_ERROR) {
+                assert(0); // TODO
+            }
+
+            state->eval_stack[state->eval_depth++] = len;
         }
         break;
 

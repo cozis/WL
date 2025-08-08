@@ -49,6 +49,7 @@ enum {
     OPCODE_FOR     = 0x2E,
     OPCODE_PUSHT   = 0x2F,
     OPCODE_PUSHFL  = 0x30,
+    OPCODE_LEN     = 0x31,
 };
 
 typedef struct {

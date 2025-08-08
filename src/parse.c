@@ -25,6 +25,7 @@ typedef enum {
     TOKEN_KWORD_TRUE,
     TOKEN_KWORD_FALSE,
     TOKEN_KWORD_INCLUDE,
+    TOKEN_KWORD_LEN,
     TOKEN_VALUE_FLOAT,
     TOKEN_VALUE_INT,
     TOKEN_VALUE_STR,
@@ -116,6 +117,7 @@ String tok2str(Token token, char *buf, int max)
         case TOKEN_KWORD_TRUE: return S("true");
         case TOKEN_KWORD_FALSE: return S("false");
         case TOKEN_KWORD_INCLUDE: return S("include");
+        case TOKEN_KWORD_LEN: return S("len");
 
         case TOKEN_VALUE_FLOAT:
         {
@@ -242,18 +244,19 @@ Token next_token(Parser *p)
             p->s.cur - start
         };
 
-        if (streq(kword, S("if")))    return (Token) { .type=TOKEN_KWORD_IF };
-        if (streq(kword, S("else")))  return (Token) { .type=TOKEN_KWORD_ELSE };
-        if (streq(kword, S("while"))) return (Token) { .type=TOKEN_KWORD_WHILE };
-        if (streq(kword, S("for")))   return (Token) { .type=TOKEN_KWORD_FOR };
-        if (streq(kword, S("in")))    return (Token) { .type=TOKEN_KWORD_IN };
-        if (streq(kword, S("fun")))   return (Token) { .type=TOKEN_KWORD_FUN };
-        if (streq(kword, S("let")))   return (Token) { .type=TOKEN_KWORD_LET };
-        if (streq(kword, S("print"))) return (Token) { .type=TOKEN_KWORD_PRINT };
-        if (streq(kword, S("none")))  return (Token) { .type=TOKEN_KWORD_NONE };
-        if (streq(kword, S("true")))  return (Token) { .type=TOKEN_KWORD_TRUE };
-        if (streq(kword, S("false"))) return (Token) { .type=TOKEN_KWORD_FALSE };
+        if (streq(kword, S("if")))      return (Token) { .type=TOKEN_KWORD_IF      };
+        if (streq(kword, S("else")))    return (Token) { .type=TOKEN_KWORD_ELSE    };
+        if (streq(kword, S("while")))   return (Token) { .type=TOKEN_KWORD_WHILE   };
+        if (streq(kword, S("for")))     return (Token) { .type=TOKEN_KWORD_FOR     };
+        if (streq(kword, S("in")))      return (Token) { .type=TOKEN_KWORD_IN      };
+        if (streq(kword, S("fun")))     return (Token) { .type=TOKEN_KWORD_FUN     };
+        if (streq(kword, S("let")))     return (Token) { .type=TOKEN_KWORD_LET     };
+        if (streq(kword, S("print")))   return (Token) { .type=TOKEN_KWORD_PRINT   };
+        if (streq(kword, S("none")))    return (Token) { .type=TOKEN_KWORD_NONE    };
+        if (streq(kword, S("true")))    return (Token) { .type=TOKEN_KWORD_TRUE    };
+        if (streq(kword, S("false")))   return (Token) { .type=TOKEN_KWORD_FALSE   };
         if (streq(kword, S("include"))) return (Token) { .type=TOKEN_KWORD_INCLUDE };
+        if (streq(kword, S("len")))     return (Token) { .type=TOKEN_KWORD_LEN     };
 
         return (Token) { .type=TOKEN_IDENT, .sval=kword };
     }
@@ -809,6 +812,23 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             parent->type = NODE_OPER_NEG;
+            parent->left = child;
+
+            ret = parent;
+        }
+        break;
+
+        case TOKEN_KWORD_LEN:
+        {
+            Node *child = parse_atom(p);
+            if (child == NULL)
+                return NULL;
+
+            Node *parent = alloc_node(p);
+            if (parent == NULL)
+                return NULL;
+
+            parent->type = NODE_OPER_LEN;
             parent->left = child;
 
             ret = parent;
@@ -1610,6 +1630,12 @@ void print_node(Node *node)
             }
             printf("}");
         }
+        break;
+
+        case NODE_OPER_LEN:
+        printf("len(");
+        print_node(node->left);
+        printf(")");
         break;
 
         case NODE_OPER_POS:

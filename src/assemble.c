@@ -317,6 +317,7 @@ bool is_expr(Node *node)
         case NODE_SELECT:
         case NODE_NESTED:
         case NODE_FUNC_CALL:
+        case NODE_OPER_LEN:
         case NODE_OPER_POS:
         case NODE_OPER_NEG:
         case NODE_OPER_ASS:
@@ -558,6 +559,20 @@ void assemble_expr(Assembler *a, Node *node, int num_results)
                 append_u32(&a->out, num_results);
             }
 
+            append_u8(&a->out, OPCODE_GCOALESCE);
+        }
+        break;
+
+        case NODE_OPER_LEN:
+        assemble_expr(a, node->left, 1);
+        append_u8(&a->out, OPCODE_LEN);
+
+        if (num_results == 0)
+            append_u8(&a->out, OPCODE_POP);
+        else if (num_results != -1 && num_results != 1) {
+            append_u8(&a->out, OPCODE_GROUP);
+            append_u8(&a->out, OPCODE_GTRUNC);
+            append_u32(&a->out, num_results-1);
             append_u8(&a->out, OPCODE_GCOALESCE);
         }
         break;

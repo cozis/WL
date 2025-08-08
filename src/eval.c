@@ -934,6 +934,24 @@ int step(WL_State *state)
         }
         break;
 
+        case OPCODE_LEN:
+        {
+            Value set = state->eval_stack[state->eval_depth-1];
+
+            Type type = type_of(set);
+            if (type != TYPE_ARRAY && type != TYPE_MAP) {
+                assert(0); // TODO
+            }
+
+            Value len = make_int(state->a, value_length(set));
+            if (len == VALUE_ERROR) {
+                assert(0); // TODO
+            }
+
+            state->eval_stack[state->eval_depth++] = len;
+        }
+        break;
+
         default:
         eval_report(state, "Invalid opcode (offset %d)", state->off-1);
         return -1;

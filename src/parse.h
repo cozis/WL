@@ -20,6 +20,7 @@ typedef enum {
     NODE_INCLUDE,
     NODE_SELECT,
     NODE_NESTED,
+    NODE_OPER_LEN,
     NODE_OPER_POS,
     NODE_OPER_NEG,
     NODE_OPER_ASS,
