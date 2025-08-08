@@ -55,7 +55,10 @@ void             WL_Compiler_free (WL_Compiler *compiler);
 WL_CompileResult WL_compile       (WL_Compiler *compiler, WL_String file, WL_String content);
 WL_State*        WL_State_init    (WL_Arena *a, WL_Program p, char *err, int errmax);
 void             WL_State_free    (WL_State *state);
+void             WL_State_trace   (WL_State *state, int trace);
 WL_Result        WL_eval          (WL_State *state);
+
+void             WL_dump_program(WL_Program program);
 
 int       WL_streq      (WL_String a, char *b, int blen);
 int       WL_peeknone   (WL_State *state, int off);

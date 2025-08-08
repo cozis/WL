@@ -20,6 +20,8 @@ struct WL_State {
     String data;
     int off;
 
+    bool trace;
+
     WL_Arena *a;
 
     char *errbuf;
@@ -69,6 +71,8 @@ void eval_report(WL_State *state, char *fmt, ...)
 
 static uint8_t read_u8(WL_State *state)
 {
+    assert(state->off >= 0);
+    assert(state->off < state->code.len);
     return state->code.ptr[state->off++];
 }
 
@@ -102,11 +106,12 @@ static double read_f64(WL_State *state)
 int step(WL_State *state)
 {
     uint8_t opcode = read_u8(state);
-/*
-    printf("%-3d: ", e->off);
-    print_instruction(state->code.ptr + e->off, e->data.ptr);
-    printf("\n");
-*/
+
+    if (state->trace) {
+        printf("%-3d: ", state->off-1);
+        print_instruction(state->code.ptr + state->off - 1, state->data.ptr);
+        printf("\n");
+    }
 
     switch (opcode) {
 
@@ -881,6 +886,8 @@ int step(WL_State *state)
             uint8_t  var_2 = read_u8(state);
             uint32_t end   = read_u32(state);
 
+            printf("for end %u\n", end); // TODO
+
             int base;
             {
                 int group = state->frames[state->num_frames-1].group;
@@ -954,6 +961,7 @@ WL_State *WL_State_init(WL_Arena *a, WL_Program p, char *err, int errmax)
         .code=code,
         .data=data,
         .off=0,
+        .trace=false,
         .a=a,
         .errbuf=err,
         .errmax=errmax,
@@ -975,6 +983,11 @@ void WL_State_free(WL_State *state)
     state->num_frames--;
 
     // TODO
+}
+
+void WL_State_trace(WL_State *state, int trace)
+{
+    state->trace = (trace != 0);
 }
 
 WL_Result WL_eval(WL_State *state)

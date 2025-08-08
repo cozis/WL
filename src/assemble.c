@@ -1594,6 +1594,28 @@ char *print_instruction(char *p, char *data)
         case OPCODE_PUSHFL:
         printf("PUSHFL");
         break;
+
+        case OPCODE_FOR:
+        {
+            uint8_t a;
+            memcpy(&a, p, sizeof(uint8_t));
+            p += sizeof(uint8_t);
+
+            uint8_t b;
+            memcpy(&b, p, sizeof(uint8_t));
+            p += sizeof(uint8_t);
+
+            uint8_t c;
+            memcpy(&c, p, sizeof(uint8_t));
+            p += sizeof(uint8_t);
+
+            uint32_t d;
+            memcpy(&d, p, sizeof(uint32_t));
+            p += sizeof(uint32_t);
+
+            printf("FOR %u %u %u %u", a, b, c, d);
+        }
+        break;
     }
 
     return p;

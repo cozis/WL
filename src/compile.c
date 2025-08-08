@@ -116,3 +116,8 @@ WL_CompileResult WL_compile(WL_Compiler *compiler, WL_String file, WL_String con
 
     return (WL_CompileResult) { .type=WL_COMPILE_RESULT_DONE, .program=ares.program };
 }
+
+void WL_dump_program(WL_Program program)
+{
+    print_program(program);
+}

@@ -689,12 +689,6 @@ Token next_token(Parser *p)
         if (streq(kword, S("false"))) return (Token) { .type=TOKEN_KWORD_FALSE };
         if (streq(kword, S("include"))) return (Token) { .type=TOKEN_KWORD_INCLUDE };
 
-        kword = copystr(kword, p->a);
-        if (kword.len == 0) {
-            parser_report(p, "Out of memory");
-            return (Token) { .type=TOKEN_ERROR };
-        }
-
         return (Token) { .type=TOKEN_IDENT, .sval=kword };
     }
 
@@ -4040,6 +4034,28 @@ char *print_instruction(char *p, char *data)
         case OPCODE_PUSHFL:
         printf("PUSHFL");
         break;
+
+        case OPCODE_FOR:
+        {
+            uint8_t a;
+            memcpy(&a, p, sizeof(uint8_t));
+            p += sizeof(uint8_t);
+
+            uint8_t b;
+            memcpy(&b, p, sizeof(uint8_t));
+            p += sizeof(uint8_t);
+
+            uint8_t c;
+            memcpy(&c, p, sizeof(uint8_t));
+            p += sizeof(uint8_t);
+
+            uint32_t d;
+            memcpy(&d, p, sizeof(uint32_t));
+            p += sizeof(uint32_t);
+
+            printf("FOR %u %u %u %u", a, b, c, d);
+        }
+        break;
     }
 
     return p;
@@ -4572,7 +4588,7 @@ static void value_to_string_inner(Value v, ToStringContext *tostr)
             int cursor = 0;
             while (batch) {
 
-                int num = ITEMS_PER_MAP_BATCH;
+                int num = ITEMS_PER_ARRAY_BATCH;
                 if (batch->next == NULL)
                     num = a->tail_count;
 
@@ -4644,6 +4660,8 @@ struct WL_State {
     String data;
     int off;
 
+    bool trace;
+
     WL_Arena *a;
 
     char *errbuf;
@@ -4693,6 +4711,8 @@ void eval_report(WL_State *state, char *fmt, ...)
 
 static uint8_t read_u8(WL_State *state)
 {
+    assert(state->off >= 0);
+    assert(state->off < state->code.len);
     return state->code.ptr[state->off++];
 }
 
@@ -4726,11 +4746,12 @@ static double read_f64(WL_State *state)
 int step(WL_State *state)
 {
     uint8_t opcode = read_u8(state);
-/*
-    printf("%-3d: ", e->off);
-    print_instruction(state->code.ptr + e->off, e->data.ptr);
-    printf("\n");
-*/
+
+    if (state->trace) {
+        printf("%-3d: ", state->off-1);
+        print_instruction(state->code.ptr + state->off - 1, state->data.ptr);
+        printf("\n");
+    }
 
     switch (opcode) {
 
@@ -5505,6 +5526,8 @@ int step(WL_State *state)
             uint8_t  var_2 = read_u8(state);
             uint32_t end   = read_u32(state);
 
+            printf("for end %u\n", end); // TODO
+
             int base;
             {
                 int group = state->frames[state->num_frames-1].group;
@@ -5578,6 +5601,7 @@ WL_State *WL_State_init(WL_Arena *a, WL_Program p, char *err, int errmax)
         .code=code,
         .data=data,
         .off=0,
+        .trace=false,
         .a=a,
         .errbuf=err,
         .errmax=errmax,
@@ -5599,6 +5623,11 @@ void WL_State_free(WL_State *state)
     state->num_frames--;
 
     // TODO
+}
+
+void WL_State_trace(WL_State *state, int trace)
+{
+    state->trace = (trace != 0);
 }
 
 WL_Result WL_eval(WL_State *state)
@@ -6104,4 +6133,9 @@ WL_CompileResult WL_compile(WL_Compiler *compiler, WL_String file, WL_String con
     }
 
     return (WL_CompileResult) { .type=WL_COMPILE_RESULT_DONE, .program=ares.program };
+}
+
+void WL_dump_program(WL_Program program)
+{
+    print_program(program);
 }

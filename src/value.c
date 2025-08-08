@@ -470,7 +470,7 @@ static void value_to_string_inner(Value v, ToStringContext *tostr)
             int cursor = 0;
             while (batch) {
 
-                int num = ITEMS_PER_MAP_BATCH;
+                int num = ITEMS_PER_ARRAY_BATCH;
                 if (batch->next == NULL)
                     num = a->tail_count;
 

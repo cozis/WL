@@ -255,12 +255,6 @@ Token next_token(Parser *p)
         if (streq(kword, S("false"))) return (Token) { .type=TOKEN_KWORD_FALSE };
         if (streq(kword, S("include"))) return (Token) { .type=TOKEN_KWORD_INCLUDE };
 
-        kword = copystr(kword, p->a);
-        if (kword.len == 0) {
-            parser_report(p, "Out of memory");
-            return (Token) { .type=TOKEN_ERROR };
-        }
-
         return (Token) { .type=TOKEN_IDENT, .sval=kword };
     }
 

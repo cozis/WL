@@ -23,6 +23,9 @@ int main(int argc, char **argv)
         assert(0); // TODO
     }
 
+    int num_loaded_files = 0;
+    char *loaded_files[128];
+
     WL_CompileResult result;
     WL_String path = { file, strlen(file) };
     for (int i = 0;; i++) {
@@ -51,7 +54,7 @@ int main(int argc, char **argv)
 
         result = WL_compile(compiler, path, (WL_String) { file_data, file_size });
 
-        free(file_data);
+        loaded_files[num_loaded_files++] = file_data;
 
         if (result.type == WL_COMPILE_RESULT_ERROR) {
             printf("Compilation of '%.*s' failed\n", path.len, path.ptr);
@@ -63,7 +66,10 @@ int main(int argc, char **argv)
 
         assert(result.type == WL_COMPILE_RESULT_FILE);
         path = result.path;
-   }
+    }
+
+    for (int i = 0; i < num_loaded_files; i++)
+        free(loaded_files[i]);
 
     WL_Compiler_free(compiler);
 
@@ -74,6 +80,8 @@ int main(int argc, char **argv)
     WL_Program program = result.program;
 
     WL_State *state = WL_State_init(&a, program, err, (int) sizeof(err));
+
+    WL_State_trace(state, 0);
 
     for (bool done = false; !done; ) {
 
