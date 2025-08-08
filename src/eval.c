@@ -886,8 +886,6 @@ int step(WL_State *state)
             uint8_t  var_2 = read_u8(state);
             uint32_t end   = read_u32(state);
 
-            printf("for end %u\n", end); // TODO
-
             int base;
             {
                 int group = state->frames[state->num_frames-1].group;
