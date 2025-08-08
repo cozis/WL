@@ -21,6 +21,10 @@ typedef enum {
     TOKEN_KWORD_FUN,
     TOKEN_KWORD_LET,
     TOKEN_KWORD_PRINT,
+    TOKEN_KWORD_NONE,
+    TOKEN_KWORD_TRUE,
+    TOKEN_KWORD_FALSE,
+    TOKEN_KWORD_INCLUDE,
     TOKEN_VALUE_FLOAT,
     TOKEN_VALUE_INT,
     TOKEN_VALUE_STR,
@@ -58,11 +62,13 @@ typedef struct {
 } Token;
 
 typedef struct {
-    Scanner s;
-    WL_Arena   *a;
-    char *errbuf;
-    int   errmax;
-    int   errlen;
+    Scanner   s;
+    WL_Arena* a;
+    char*     errbuf;
+    int       errmax;
+    int       errlen;
+    Node*     include_head;
+    Node**    include_tail;
 } Parser;
 
 bool consume_str(Scanner *s, String x)
@@ -106,6 +112,10 @@ String tok2str(Token token, char *buf, int max)
         case TOKEN_KWORD_FUN: return S("fun");
         case TOKEN_KWORD_LET: return S("let");
         case TOKEN_KWORD_PRINT: return S("print");
+        case TOKEN_KWORD_NONE: return S("none");
+        case TOKEN_KWORD_TRUE: return S("true");
+        case TOKEN_KWORD_FALSE: return S("false");
+        case TOKEN_KWORD_INCLUDE: return S("include");
 
         case TOKEN_VALUE_FLOAT:
         {
@@ -240,6 +250,17 @@ Token next_token(Parser *p)
         if (streq(kword, S("fun")))   return (Token) { .type=TOKEN_KWORD_FUN };
         if (streq(kword, S("let")))   return (Token) { .type=TOKEN_KWORD_LET };
         if (streq(kword, S("print"))) return (Token) { .type=TOKEN_KWORD_PRINT };
+        if (streq(kword, S("none")))  return (Token) { .type=TOKEN_KWORD_NONE };
+        if (streq(kword, S("true")))  return (Token) { .type=TOKEN_KWORD_TRUE };
+        if (streq(kword, S("false"))) return (Token) { .type=TOKEN_KWORD_FALSE };
+        if (streq(kword, S("include"))) return (Token) { .type=TOKEN_KWORD_INCLUDE };
+
+        kword = copystr(kword, p->a);
+        if (kword.len == 0) {
+            parser_report(p, "Out of memory");
+            return (Token) { .type=TOKEN_ERROR };
+        }
+
         return (Token) { .type=TOKEN_IDENT, .sval=kword };
     }
 
@@ -427,8 +448,6 @@ Node *parse_html(Parser *p)
 {
     // NOTE: The first < was already consumed
     
-    int node_offset = p->s.cur-1;
-
     Token t = next_token(p);
     if (t.type != TOKEN_IDENT) {
         char buf[1<<8];
@@ -443,8 +462,6 @@ Node *parse_html(Parser *p)
 
     bool no_body = false;
     for (;;) {
-
-        int param_offset = p->s.cur;
 
         String attr_name;
         Node  *attr_value;
@@ -488,7 +505,6 @@ Node *parse_html(Parser *p)
             return NULL;
 
         child->type = NODE_HTML_PARAM;
-        child->text = (String) { p->s.src + param_offset, p->s.cur - param_offset };
         child->attr_name  = attr_name;
         child->attr_value = attr_value;
 
@@ -529,7 +545,6 @@ Node *parse_html(Parser *p)
                     return NULL;
 
                 child->type = NODE_VALUE_STR;
-                child->text = (String) { p->s.src + off, p->s.cur - off };
                 child->sval = (String) { p->s.src + off, p->s.cur - off };
 
                 *tail = child;
@@ -588,7 +603,6 @@ Node *parse_html(Parser *p)
         return NULL;
 
     parent->type = NODE_VALUE_HTML;
-    parent->text = (String) { p->s.src + node_offset, p->s.cur - node_offset };
     parent->tagname = tagname;
     parent->params = param_head;
     parent->child  = head;
@@ -600,8 +614,6 @@ Node *parse_html(Parser *p)
 Node *parse_array(Parser *p)
 {
     // Left bracket already consumed
-
-    int start = p->s.cur;
 
     Node *head;
     Node **tail = &head;
@@ -642,7 +654,6 @@ Node *parse_array(Parser *p)
         return NULL;
 
     parent->type = NODE_VALUE_ARRAY;
-    parent->text = (String) { p->s.src + start, p->s.cur - start };
     parent->child  = head;
 
     return parent;
@@ -651,8 +662,6 @@ Node *parse_array(Parser *p)
 Node *parse_map(Parser *p)
 {
     // Left bracket already consumed
-
-    int start = p->s.cur;
 
     Node *head;
     Node **tail = &head;
@@ -676,7 +685,6 @@ Node *parse_map(Parser *p)
                     return NULL;
 
                 key->type = NODE_VALUE_STR;
-                key->text = t.sval;
                 key->sval = t.sval;
 
             } else {
@@ -722,7 +730,6 @@ Node *parse_map(Parser *p)
         return NULL;
 
     parent->type = NODE_VALUE_MAP;
-    parent->text = (String) { p->s.src + start, p->s.cur - start };
     parent->child  = head;
 
     return parent;
@@ -776,8 +783,6 @@ bool right_associative(Token t)
 
 Node *parse_atom(Parser *p)
 {
-    int start = p->s.cur;
-
     Token t = next_token(p);
 
     Node *ret;
@@ -793,7 +798,6 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             parent->type = NODE_OPER_POS;
-            parent->text = (String) { p->s.src + start, p->s.cur - start };
             parent->left = child;
 
             ret = parent;
@@ -811,7 +815,6 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             parent->type = NODE_OPER_NEG;
-            parent->text = (String) { p->s.src + start, p->s.cur - start };
             parent->left = child;
 
             ret = parent;
@@ -825,7 +828,6 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             node->type = NODE_VALUE_VAR;
-            node->text = (String) { p->s.src + start, p->s.cur - start };
             node->sval = t.sval;
 
             ret = node;
@@ -839,7 +841,6 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             node->type = NODE_VALUE_INT;
-            node->text = (String) { p->s.src + start, p->s.cur - start };
             node->ival = t.uval;
 
             ret = node;
@@ -853,7 +854,6 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             node->type = NODE_VALUE_FLOAT;
-            node->text = (String) { p->s.src + start, p->s.cur - start };
             node->dval = t.dval;
 
             ret = node;
@@ -867,7 +867,44 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             node->type = NODE_VALUE_STR;
-            node->text = (String) { p->s.src + start, p->s.cur - start };
+            node->sval = t.sval;
+
+            ret = node;
+        }
+        break;
+
+        case TOKEN_KWORD_NONE:
+        {
+            Node *node = alloc_node(p);
+            if (node == NULL)
+                return NULL;
+
+            node->type = NODE_VALUE_NONE;
+            node->sval = t.sval;
+
+            ret = node;
+        }
+        break;
+
+        case TOKEN_KWORD_TRUE:
+        {
+            Node *node = alloc_node(p);
+            if (node == NULL)
+                return NULL;
+
+            node->type = NODE_VALUE_TRUE;
+            node->sval = t.sval;
+
+            ret = node;
+        }
+        break;
+        case TOKEN_KWORD_FALSE:
+        {
+            Node *node = alloc_node(p);
+            if (node == NULL)
+                return NULL;
+
+            node->type = NODE_VALUE_FALSE;
             node->sval = t.sval;
 
             ret = node;
@@ -901,7 +938,6 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             parent->type = NODE_NESTED;
-            parent->text = (String) { p->s.src + start, p->s.cur - start };
             parent->left = node;
 
             ret = parent;
@@ -941,7 +977,6 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             node->type = NODE_VALUE_SYSVAR;
-            node->text = (String) { p->s.src + start, p->s.cur - start };
             node->sval = t.sval;
 
             ret = node;
@@ -973,7 +1008,6 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             child->type = NODE_VALUE_STR;
-            child->text = t.sval;
             child->sval = t.sval;
 
             Node *parent = alloc_node(p);
@@ -981,7 +1015,6 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             parent->type = NODE_SELECT;
-            parent->text = (String) { p->s.src + start, p->s.cur - start };
             parent->left = ret;
             parent->right = child;
 
@@ -1004,7 +1037,6 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             parent->type = NODE_SELECT;
-            parent->text = (String) { p->s.src + start, p->s.cur - start };
             parent->left = ret;
             parent->right = child;
 
@@ -1048,7 +1080,6 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             parent->type = NODE_FUNC_CALL;
-            parent->text = (String) { p->s.src + start, p->s.cur - start };
             parent->left = ret;
             parent->right = arg_head;
 
@@ -1063,7 +1094,7 @@ Node *parse_atom(Parser *p)
     return ret;
 }
 
-Node *parse_expr_inner(Parser *p, Node *left, int min_prec, int start, int flags)
+Node *parse_expr_inner(Parser *p, Node *left, int min_prec, int flags)
 {
     for (;;) {
 
@@ -1073,8 +1104,6 @@ Node *parse_expr_inner(Parser *p, Node *left, int min_prec, int start, int flags
             p->s = saved;
            break;
         }
-
-        int right_start = p->s.cur;
 
         Node *right = parse_atom(p);
         if (right == NULL)
@@ -1094,7 +1123,7 @@ Node *parse_expr_inner(Parser *p, Node *left, int min_prec, int start, int flags
             if (p2 <= p1 && (p1 != p2 || !right_associative(t2)))
                 break;
 
-            right = parse_expr_inner(p, right, p1 + (p2 > p1), right_start, flags);
+            right = parse_expr_inner(p, right, p1 + (p2 > p1), flags);
             if (right == NULL)
                 return NULL;
         }
@@ -1103,7 +1132,6 @@ Node *parse_expr_inner(Parser *p, Node *left, int min_prec, int start, int flags
         if (parent == NULL)
             return NULL;
 
-        parent->text = (String) { p->s.src + start, p->s.cur - start };
         parent->left = left;
         parent->right = right;
 
@@ -1131,13 +1159,11 @@ Node *parse_expr_inner(Parser *p, Node *left, int min_prec, int start, int flags
 
 Node *parse_expr(Parser *p, int flags)
 {
-    int start = p->s.cur;
-
     Node *left = parse_atom(p);
     if (left == NULL)
         return NULL;
 
-    return parse_expr_inner(p, left, 0, start, flags);
+    return parse_expr_inner(p, left, 0, flags);
 }
 
 Node *parse_expr_stmt(Parser *p, int opflags)
@@ -1151,8 +1177,6 @@ Node *parse_expr_stmt(Parser *p, int opflags)
 
 Node *parse_ifelse_stmt(Parser *p, int opflags)
 {
-    int start = p->s.cur;
-
     Token t = next_token(p);
     if (t.type != TOKEN_KWORD_IF) {
         parser_report(p, "Missing 'if' keyword before if statement");
@@ -1192,7 +1216,6 @@ Node *parse_ifelse_stmt(Parser *p, int opflags)
         return NULL;
 
     parent->type = NODE_IFELSE;
-    parent->text = (String) { p->s.src + start, p->s.cur - start };
     parent->left = if_stmt;
     parent->right = else_stmt;
     parent->cond = cond;
@@ -1202,8 +1225,6 @@ Node *parse_ifelse_stmt(Parser *p, int opflags)
 
 Node *parse_for_stmt(Parser *p, int opflags)
 {
-    int start = p->s.cur;
-
     Token t = next_token(p);
     if (t.type != TOKEN_KWORD_FOR) {
         parser_report(p, "Missing 'for' keyword at the start of a for statement");
@@ -1256,7 +1277,6 @@ Node *parse_for_stmt(Parser *p, int opflags)
         return NULL;
 
     parent->type = NODE_FOR;
-    parent->text = (String) { p->s.src + start, p->s.cur - start };
     parent->left = body;
     parent->for_var1 = var1;
     parent->for_var2 = var2;
@@ -1267,8 +1287,6 @@ Node *parse_for_stmt(Parser *p, int opflags)
 
 Node *parse_while_stmt(Parser *p, int opflags)
 {
-    int start = p->s.cur;
-
     Token t = next_token(p);
     if (t.type != TOKEN_KWORD_WHILE) {
         parser_report(p, "Missing keyword 'while' at the start of a while statement");
@@ -1294,7 +1312,6 @@ Node *parse_while_stmt(Parser *p, int opflags)
         return NULL;
 
     parent->type = NODE_WHILE;
-    parent->text = (String) { p->s.src + start, p->s.cur - start };
     parent->left = stmt;
     parent->cond = cond;
 
@@ -1303,8 +1320,6 @@ Node *parse_while_stmt(Parser *p, int opflags)
 
 Node *parse_block_stmt(Parser *p, bool curly)
 {
-    int start = p->s.cur;
-
     if (curly) {
         Token t = next_token(p);
         if (t.type != TOKEN_CURLY_OPEN) {
@@ -1344,7 +1359,6 @@ Node *parse_block_stmt(Parser *p, bool curly)
         return NULL;
 
     parent->type = NODE_BLOCK;
-    parent->text = (String) { p->s.src + start, p->s.cur - start };
     parent->left = head;
 
     return parent;
@@ -1352,8 +1366,6 @@ Node *parse_block_stmt(Parser *p, bool curly)
 
 Node *parse_func_decl(Parser *p, int opflags)
 {
-    int start = p->s.cur;
-
     Token t = next_token(p);
     if (t.type != TOKEN_KWORD_FUN) {
         parser_report(p, "Missing keyword 'fun' at the start of a function declaration");
@@ -1383,8 +1395,6 @@ Node *parse_func_decl(Parser *p, int opflags)
 
         for (;;) {
 
-            int arg_start = p->s.cur;
-
             t = next_token(p);
             if (t.type != TOKEN_IDENT) {
                 parser_report(p, "Missing argument name in function declaration");
@@ -1397,7 +1407,6 @@ Node *parse_func_decl(Parser *p, int opflags)
                 return NULL;
 
             node->type = NODE_FUNC_ARG;
-            node->text = (String) { p->s.src + arg_start, p->s.cur - arg_start };
             node->sval = argname;
 
             *arg_tail = node;
@@ -1427,7 +1436,6 @@ Node *parse_func_decl(Parser *p, int opflags)
         return NULL;
 
     parent->type = NODE_FUNC_DECL;
-    parent->text = (String) { p->s.src + start, p->s.cur - start };
     parent->func_name = name;
     parent->func_args = arg_head;
     parent->func_body = body;
@@ -1437,8 +1445,6 @@ Node *parse_func_decl(Parser *p, int opflags)
 
 Node *parse_var_decl(Parser *p, int opflags)
 {
-    int start = p->s.cur;
-
     Token t = next_token(p);
     if (t.type != TOKEN_KWORD_LET) {
         parser_report(p, "Missing keyword 'let' at the start of a variable declaration");
@@ -1472,7 +1478,6 @@ Node *parse_var_decl(Parser *p, int opflags)
         return NULL;
 
     parent->type = NODE_VAR_DECL;
-    parent->text = (String) { p->s.src + start, p->s.cur - start };
     parent->var_name = name;
     parent->var_value = value;
 
@@ -1481,8 +1486,6 @@ Node *parse_var_decl(Parser *p, int opflags)
 
 Node *parse_print_stmt(Parser *p, int opflags)
 {
-    int start = p->s.cur;
-
     Token t = next_token(p);
     if (t.type != TOKEN_KWORD_PRINT) {
         parser_report(p, "Missing keyword 'print' at the start of a print statement");
@@ -1498,8 +1501,36 @@ Node *parse_print_stmt(Parser *p, int opflags)
         return NULL;
 
     parent->type = NODE_PRINT;
-    parent->text = (String) { p->s.src + start, p->s.cur - start };
     parent->left = arg;
+
+    return parent;
+}
+
+Node *parse_include_stmt(Parser *p)
+{
+    Token t = next_token(p);
+    if (t.type != TOKEN_KWORD_INCLUDE) {
+        parser_report(p, "Missing keyword 'include' at the start of an include statement");
+        return NULL;
+    }
+
+    t = next_token(p);
+    if (t.type != TOKEN_VALUE_STR) {
+        parser_report(p, "Missing file path string after 'include' keyword");
+        return NULL;
+    }
+    String path = t.sval;
+
+    Node *parent = alloc_node(p);
+    if (parent == NULL)
+        return NULL;
+
+    parent->type = NODE_INCLUDE;
+    parent->include_path = path;
+    parent->include_root = NULL;
+
+    *p->include_tail = parent;
+    p->include_tail = &parent->include_next;
 
     return parent;
 }
@@ -1511,6 +1542,9 @@ Node *parse_stmt(Parser *p, int opflags)
     p->s = saved;
 
     switch (t.type) {
+
+        case TOKEN_KWORD_INCLUDE:
+        return parse_include_stmt(p);
 
         case TOKEN_KWORD_PRINT:
         return parse_print_stmt(p, opflags);
@@ -1543,6 +1577,18 @@ Node *parse_stmt(Parser *p, int opflags)
 void print_node(Node *node)
 {
     switch (node->type) {
+
+        case NODE_VALUE_NONE:
+        printf("none");
+        break;
+
+        case NODE_VALUE_TRUE:
+        printf("true");
+        break;
+
+        case NODE_VALUE_FALSE:
+        printf("false");
+        break;
 
         case NODE_NESTED:
         {
@@ -1853,6 +1899,18 @@ void print_node(Node *node)
             //printf(";");
         }
         break;
+
+        case NODE_INCLUDE:
+        {
+            printf("include \"%.*s\"",
+                node->include_path.len,
+                node->include_path.ptr);
+        }
+        break;
+
+        default:
+        printf("(invalid node type %x)", node->type);
+        break;
     }
 }
 
@@ -1866,10 +1924,15 @@ ParseResult parse(String src, WL_Arena *a, char *errbuf, int errmax)
         .errlen=0,
     };
 
+    p.include_tail = &p.include_head;
+
     Node *node = parse_block_stmt(&p, false);
-
     if (node == NULL)
-        return (ParseResult) { NULL, p.errlen };
+        return (ParseResult) { .node=NULL, .includes=NULL, .errlen=p.errlen };
 
-    return (ParseResult) { node, -1 };
+    assert(node->type == NODE_BLOCK);
+    node->type = NODE_GLOBAL_BLOCK;
+
+    *p.include_tail = NULL;
+    return (ParseResult) { .node=node, .includes=p.include_head, .errlen=-1 };
 }

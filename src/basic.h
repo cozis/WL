@@ -35,6 +35,7 @@ int  hex_digit_to_int(char c);
 
 bool streq(String a, String b);
 bool streqcase(String a, String b);
+String copystr(String s, WL_Arena *a);
 
 void *alloc(WL_Arena *a, int len, int align);
 bool grow_alloc(WL_Arena *a, char *p, int new_len);

@@ -1,3 +1,7 @@
+include "example.wl"
+
+ugu
+
 let posts = [
     {
         author: "UserA",

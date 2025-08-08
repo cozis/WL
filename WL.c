@@ -71,6 +71,7 @@ int  hex_digit_to_int(char c);
 
 bool streq(String a, String b);
 bool streqcase(String a, String b);
+String copystr(String s, WL_Arena *a);
 
 void *alloc(WL_Arena *a, int len, int align);
 bool grow_alloc(WL_Arena *a, char *p, int new_len);
@@ -169,6 +170,15 @@ bool grow_alloc(WL_Arena *a, char *p, int new_len)
         return false;
     a->cur = new_cur;
     return true;
+}
+
+String copystr(String s, WL_Arena *a)
+{
+    char *p = alloc(a, s.len, 1);
+    if (p == NULL)
+        return (String) { NULL, 0 };
+    memcpy(p, s.ptr, s.len);
+    return (String) { p, s.len };
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -334,9 +344,11 @@ typedef enum {
     NODE_VAR_DECL,
     NODE_PRINT,
     NODE_BLOCK,
+    NODE_GLOBAL_BLOCK,
     NODE_IFELSE,
     NODE_FOR,
     NODE_WHILE,
+    NODE_INCLUDE,
     NODE_SELECT,
     NODE_NESTED,
     NODE_OPER_POS,
@@ -354,6 +366,9 @@ typedef enum {
     NODE_VALUE_INT,
     NODE_VALUE_FLOAT,
     NODE_VALUE_STR,
+    NODE_VALUE_NONE,
+    NODE_VALUE_TRUE,
+    NODE_VALUE_FALSE,
     NODE_VALUE_VAR,
     NODE_VALUE_SYSVAR,
     NODE_VALUE_HTML,
@@ -366,7 +381,6 @@ typedef struct Node Node;
 struct Node {
     NodeType type;
     Node *next;
-    String text;
 
     Node *key;
 
@@ -397,10 +411,15 @@ struct Node {
 
     String var_name;
     Node  *var_value;
+
+    String include_path;
+    Node*  include_next;
+    Node*  include_root;
 };
 
 typedef struct {
     Node *node;
+    Node *includes;
     int   errlen;
 } ParseResult;
 
@@ -436,6 +455,10 @@ typedef enum {
     TOKEN_KWORD_FUN,
     TOKEN_KWORD_LET,
     TOKEN_KWORD_PRINT,
+    TOKEN_KWORD_NONE,
+    TOKEN_KWORD_TRUE,
+    TOKEN_KWORD_FALSE,
+    TOKEN_KWORD_INCLUDE,
     TOKEN_VALUE_FLOAT,
     TOKEN_VALUE_INT,
     TOKEN_VALUE_STR,
@@ -473,11 +496,13 @@ typedef struct {
 } Token;
 
 typedef struct {
-    Scanner s;
-    WL_Arena   *a;
-    char *errbuf;
-    int   errmax;
-    int   errlen;
+    Scanner   s;
+    WL_Arena* a;
+    char*     errbuf;
+    int       errmax;
+    int       errlen;
+    Node*     include_head;
+    Node**    include_tail;
 } Parser;
 
 bool consume_str(Scanner *s, String x)
@@ -521,6 +546,10 @@ String tok2str(Token token, char *buf, int max)
         case TOKEN_KWORD_FUN: return S("fun");
         case TOKEN_KWORD_LET: return S("let");
         case TOKEN_KWORD_PRINT: return S("print");
+        case TOKEN_KWORD_NONE: return S("none");
+        case TOKEN_KWORD_TRUE: return S("true");
+        case TOKEN_KWORD_FALSE: return S("false");
+        case TOKEN_KWORD_INCLUDE: return S("include");
 
         case TOKEN_VALUE_FLOAT:
         {
@@ -655,6 +684,17 @@ Token next_token(Parser *p)
         if (streq(kword, S("fun")))   return (Token) { .type=TOKEN_KWORD_FUN };
         if (streq(kword, S("let")))   return (Token) { .type=TOKEN_KWORD_LET };
         if (streq(kword, S("print"))) return (Token) { .type=TOKEN_KWORD_PRINT };
+        if (streq(kword, S("none")))  return (Token) { .type=TOKEN_KWORD_NONE };
+        if (streq(kword, S("true")))  return (Token) { .type=TOKEN_KWORD_TRUE };
+        if (streq(kword, S("false"))) return (Token) { .type=TOKEN_KWORD_FALSE };
+        if (streq(kword, S("include"))) return (Token) { .type=TOKEN_KWORD_INCLUDE };
+
+        kword = copystr(kword, p->a);
+        if (kword.len == 0) {
+            parser_report(p, "Out of memory");
+            return (Token) { .type=TOKEN_ERROR };
+        }
+
         return (Token) { .type=TOKEN_IDENT, .sval=kword };
     }
 
@@ -842,8 +882,6 @@ Node *parse_html(Parser *p)
 {
     // NOTE: The first < was already consumed
     
-    int node_offset = p->s.cur-1;
-
     Token t = next_token(p);
     if (t.type != TOKEN_IDENT) {
         char buf[1<<8];
@@ -858,8 +896,6 @@ Node *parse_html(Parser *p)
 
     bool no_body = false;
     for (;;) {
-
-        int param_offset = p->s.cur;
 
         String attr_name;
         Node  *attr_value;
@@ -903,7 +939,6 @@ Node *parse_html(Parser *p)
             return NULL;
 
         child->type = NODE_HTML_PARAM;
-        child->text = (String) { p->s.src + param_offset, p->s.cur - param_offset };
         child->attr_name  = attr_name;
         child->attr_value = attr_value;
 
@@ -944,7 +979,6 @@ Node *parse_html(Parser *p)
                     return NULL;
 
                 child->type = NODE_VALUE_STR;
-                child->text = (String) { p->s.src + off, p->s.cur - off };
                 child->sval = (String) { p->s.src + off, p->s.cur - off };
 
                 *tail = child;
@@ -1003,7 +1037,6 @@ Node *parse_html(Parser *p)
         return NULL;
 
     parent->type = NODE_VALUE_HTML;
-    parent->text = (String) { p->s.src + node_offset, p->s.cur - node_offset };
     parent->tagname = tagname;
     parent->params = param_head;
     parent->child  = head;
@@ -1015,8 +1048,6 @@ Node *parse_html(Parser *p)
 Node *parse_array(Parser *p)
 {
     // Left bracket already consumed
-
-    int start = p->s.cur;
 
     Node *head;
     Node **tail = &head;
@@ -1057,7 +1088,6 @@ Node *parse_array(Parser *p)
         return NULL;
 
     parent->type = NODE_VALUE_ARRAY;
-    parent->text = (String) { p->s.src + start, p->s.cur - start };
     parent->child  = head;
 
     return parent;
@@ -1066,8 +1096,6 @@ Node *parse_array(Parser *p)
 Node *parse_map(Parser *p)
 {
     // Left bracket already consumed
-
-    int start = p->s.cur;
 
     Node *head;
     Node **tail = &head;
@@ -1091,7 +1119,6 @@ Node *parse_map(Parser *p)
                     return NULL;
 
                 key->type = NODE_VALUE_STR;
-                key->text = t.sval;
                 key->sval = t.sval;
 
             } else {
@@ -1137,7 +1164,6 @@ Node *parse_map(Parser *p)
         return NULL;
 
     parent->type = NODE_VALUE_MAP;
-    parent->text = (String) { p->s.src + start, p->s.cur - start };
     parent->child  = head;
 
     return parent;
@@ -1191,8 +1217,6 @@ bool right_associative(Token t)
 
 Node *parse_atom(Parser *p)
 {
-    int start = p->s.cur;
-
     Token t = next_token(p);
 
     Node *ret;
@@ -1208,7 +1232,6 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             parent->type = NODE_OPER_POS;
-            parent->text = (String) { p->s.src + start, p->s.cur - start };
             parent->left = child;
 
             ret = parent;
@@ -1226,7 +1249,6 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             parent->type = NODE_OPER_NEG;
-            parent->text = (String) { p->s.src + start, p->s.cur - start };
             parent->left = child;
 
             ret = parent;
@@ -1240,7 +1262,6 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             node->type = NODE_VALUE_VAR;
-            node->text = (String) { p->s.src + start, p->s.cur - start };
             node->sval = t.sval;
 
             ret = node;
@@ -1254,7 +1275,6 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             node->type = NODE_VALUE_INT;
-            node->text = (String) { p->s.src + start, p->s.cur - start };
             node->ival = t.uval;
 
             ret = node;
@@ -1268,7 +1288,6 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             node->type = NODE_VALUE_FLOAT;
-            node->text = (String) { p->s.src + start, p->s.cur - start };
             node->dval = t.dval;
 
             ret = node;
@@ -1282,7 +1301,44 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             node->type = NODE_VALUE_STR;
-            node->text = (String) { p->s.src + start, p->s.cur - start };
+            node->sval = t.sval;
+
+            ret = node;
+        }
+        break;
+
+        case TOKEN_KWORD_NONE:
+        {
+            Node *node = alloc_node(p);
+            if (node == NULL)
+                return NULL;
+
+            node->type = NODE_VALUE_NONE;
+            node->sval = t.sval;
+
+            ret = node;
+        }
+        break;
+
+        case TOKEN_KWORD_TRUE:
+        {
+            Node *node = alloc_node(p);
+            if (node == NULL)
+                return NULL;
+
+            node->type = NODE_VALUE_TRUE;
+            node->sval = t.sval;
+
+            ret = node;
+        }
+        break;
+        case TOKEN_KWORD_FALSE:
+        {
+            Node *node = alloc_node(p);
+            if (node == NULL)
+                return NULL;
+
+            node->type = NODE_VALUE_FALSE;
             node->sval = t.sval;
 
             ret = node;
@@ -1316,7 +1372,6 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             parent->type = NODE_NESTED;
-            parent->text = (String) { p->s.src + start, p->s.cur - start };
             parent->left = node;
 
             ret = parent;
@@ -1356,7 +1411,6 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             node->type = NODE_VALUE_SYSVAR;
-            node->text = (String) { p->s.src + start, p->s.cur - start };
             node->sval = t.sval;
 
             ret = node;
@@ -1388,7 +1442,6 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             child->type = NODE_VALUE_STR;
-            child->text = t.sval;
             child->sval = t.sval;
 
             Node *parent = alloc_node(p);
@@ -1396,7 +1449,6 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             parent->type = NODE_SELECT;
-            parent->text = (String) { p->s.src + start, p->s.cur - start };
             parent->left = ret;
             parent->right = child;
 
@@ -1419,7 +1471,6 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             parent->type = NODE_SELECT;
-            parent->text = (String) { p->s.src + start, p->s.cur - start };
             parent->left = ret;
             parent->right = child;
 
@@ -1463,7 +1514,6 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             parent->type = NODE_FUNC_CALL;
-            parent->text = (String) { p->s.src + start, p->s.cur - start };
             parent->left = ret;
             parent->right = arg_head;
 
@@ -1478,7 +1528,7 @@ Node *parse_atom(Parser *p)
     return ret;
 }
 
-Node *parse_expr_inner(Parser *p, Node *left, int min_prec, int start, int flags)
+Node *parse_expr_inner(Parser *p, Node *left, int min_prec, int flags)
 {
     for (;;) {
 
@@ -1488,8 +1538,6 @@ Node *parse_expr_inner(Parser *p, Node *left, int min_prec, int start, int flags
             p->s = saved;
            break;
         }
-
-        int right_start = p->s.cur;
 
         Node *right = parse_atom(p);
         if (right == NULL)
@@ -1509,7 +1557,7 @@ Node *parse_expr_inner(Parser *p, Node *left, int min_prec, int start, int flags
             if (p2 <= p1 && (p1 != p2 || !right_associative(t2)))
                 break;
 
-            right = parse_expr_inner(p, right, p1 + (p2 > p1), right_start, flags);
+            right = parse_expr_inner(p, right, p1 + (p2 > p1), flags);
             if (right == NULL)
                 return NULL;
         }
@@ -1518,7 +1566,6 @@ Node *parse_expr_inner(Parser *p, Node *left, int min_prec, int start, int flags
         if (parent == NULL)
             return NULL;
 
-        parent->text = (String) { p->s.src + start, p->s.cur - start };
         parent->left = left;
         parent->right = right;
 
@@ -1546,13 +1593,11 @@ Node *parse_expr_inner(Parser *p, Node *left, int min_prec, int start, int flags
 
 Node *parse_expr(Parser *p, int flags)
 {
-    int start = p->s.cur;
-
     Node *left = parse_atom(p);
     if (left == NULL)
         return NULL;
 
-    return parse_expr_inner(p, left, 0, start, flags);
+    return parse_expr_inner(p, left, 0, flags);
 }
 
 Node *parse_expr_stmt(Parser *p, int opflags)
@@ -1566,8 +1611,6 @@ Node *parse_expr_stmt(Parser *p, int opflags)
 
 Node *parse_ifelse_stmt(Parser *p, int opflags)
 {
-    int start = p->s.cur;
-
     Token t = next_token(p);
     if (t.type != TOKEN_KWORD_IF) {
         parser_report(p, "Missing 'if' keyword before if statement");
@@ -1607,7 +1650,6 @@ Node *parse_ifelse_stmt(Parser *p, int opflags)
         return NULL;
 
     parent->type = NODE_IFELSE;
-    parent->text = (String) { p->s.src + start, p->s.cur - start };
     parent->left = if_stmt;
     parent->right = else_stmt;
     parent->cond = cond;
@@ -1617,8 +1659,6 @@ Node *parse_ifelse_stmt(Parser *p, int opflags)
 
 Node *parse_for_stmt(Parser *p, int opflags)
 {
-    int start = p->s.cur;
-
     Token t = next_token(p);
     if (t.type != TOKEN_KWORD_FOR) {
         parser_report(p, "Missing 'for' keyword at the start of a for statement");
@@ -1671,7 +1711,6 @@ Node *parse_for_stmt(Parser *p, int opflags)
         return NULL;
 
     parent->type = NODE_FOR;
-    parent->text = (String) { p->s.src + start, p->s.cur - start };
     parent->left = body;
     parent->for_var1 = var1;
     parent->for_var2 = var2;
@@ -1682,8 +1721,6 @@ Node *parse_for_stmt(Parser *p, int opflags)
 
 Node *parse_while_stmt(Parser *p, int opflags)
 {
-    int start = p->s.cur;
-
     Token t = next_token(p);
     if (t.type != TOKEN_KWORD_WHILE) {
         parser_report(p, "Missing keyword 'while' at the start of a while statement");
@@ -1709,7 +1746,6 @@ Node *parse_while_stmt(Parser *p, int opflags)
         return NULL;
 
     parent->type = NODE_WHILE;
-    parent->text = (String) { p->s.src + start, p->s.cur - start };
     parent->left = stmt;
     parent->cond = cond;
 
@@ -1718,8 +1754,6 @@ Node *parse_while_stmt(Parser *p, int opflags)
 
 Node *parse_block_stmt(Parser *p, bool curly)
 {
-    int start = p->s.cur;
-
     if (curly) {
         Token t = next_token(p);
         if (t.type != TOKEN_CURLY_OPEN) {
@@ -1759,7 +1793,6 @@ Node *parse_block_stmt(Parser *p, bool curly)
         return NULL;
 
     parent->type = NODE_BLOCK;
-    parent->text = (String) { p->s.src + start, p->s.cur - start };
     parent->left = head;
 
     return parent;
@@ -1767,8 +1800,6 @@ Node *parse_block_stmt(Parser *p, bool curly)
 
 Node *parse_func_decl(Parser *p, int opflags)
 {
-    int start = p->s.cur;
-
     Token t = next_token(p);
     if (t.type != TOKEN_KWORD_FUN) {
         parser_report(p, "Missing keyword 'fun' at the start of a function declaration");
@@ -1798,8 +1829,6 @@ Node *parse_func_decl(Parser *p, int opflags)
 
         for (;;) {
 
-            int arg_start = p->s.cur;
-
             t = next_token(p);
             if (t.type != TOKEN_IDENT) {
                 parser_report(p, "Missing argument name in function declaration");
@@ -1812,7 +1841,6 @@ Node *parse_func_decl(Parser *p, int opflags)
                 return NULL;
 
             node->type = NODE_FUNC_ARG;
-            node->text = (String) { p->s.src + arg_start, p->s.cur - arg_start };
             node->sval = argname;
 
             *arg_tail = node;
@@ -1842,7 +1870,6 @@ Node *parse_func_decl(Parser *p, int opflags)
         return NULL;
 
     parent->type = NODE_FUNC_DECL;
-    parent->text = (String) { p->s.src + start, p->s.cur - start };
     parent->func_name = name;
     parent->func_args = arg_head;
     parent->func_body = body;
@@ -1852,8 +1879,6 @@ Node *parse_func_decl(Parser *p, int opflags)
 
 Node *parse_var_decl(Parser *p, int opflags)
 {
-    int start = p->s.cur;
-
     Token t = next_token(p);
     if (t.type != TOKEN_KWORD_LET) {
         parser_report(p, "Missing keyword 'let' at the start of a variable declaration");
@@ -1887,7 +1912,6 @@ Node *parse_var_decl(Parser *p, int opflags)
         return NULL;
 
     parent->type = NODE_VAR_DECL;
-    parent->text = (String) { p->s.src + start, p->s.cur - start };
     parent->var_name = name;
     parent->var_value = value;
 
@@ -1896,8 +1920,6 @@ Node *parse_var_decl(Parser *p, int opflags)
 
 Node *parse_print_stmt(Parser *p, int opflags)
 {
-    int start = p->s.cur;
-
     Token t = next_token(p);
     if (t.type != TOKEN_KWORD_PRINT) {
         parser_report(p, "Missing keyword 'print' at the start of a print statement");
@@ -1913,8 +1935,36 @@ Node *parse_print_stmt(Parser *p, int opflags)
         return NULL;
 
     parent->type = NODE_PRINT;
-    parent->text = (String) { p->s.src + start, p->s.cur - start };
     parent->left = arg;
+
+    return parent;
+}
+
+Node *parse_include_stmt(Parser *p)
+{
+    Token t = next_token(p);
+    if (t.type != TOKEN_KWORD_INCLUDE) {
+        parser_report(p, "Missing keyword 'include' at the start of an include statement");
+        return NULL;
+    }
+
+    t = next_token(p);
+    if (t.type != TOKEN_VALUE_STR) {
+        parser_report(p, "Missing file path string after 'include' keyword");
+        return NULL;
+    }
+    String path = t.sval;
+
+    Node *parent = alloc_node(p);
+    if (parent == NULL)
+        return NULL;
+
+    parent->type = NODE_INCLUDE;
+    parent->include_path = path;
+    parent->include_root = NULL;
+
+    *p->include_tail = parent;
+    p->include_tail = &parent->include_next;
 
     return parent;
 }
@@ -1926,6 +1976,9 @@ Node *parse_stmt(Parser *p, int opflags)
     p->s = saved;
 
     switch (t.type) {
+
+        case TOKEN_KWORD_INCLUDE:
+        return parse_include_stmt(p);
 
         case TOKEN_KWORD_PRINT:
         return parse_print_stmt(p, opflags);
@@ -1958,6 +2011,18 @@ Node *parse_stmt(Parser *p, int opflags)
 void print_node(Node *node)
 {
     switch (node->type) {
+
+        case NODE_VALUE_NONE:
+        printf("none");
+        break;
+
+        case NODE_VALUE_TRUE:
+        printf("true");
+        break;
+
+        case NODE_VALUE_FALSE:
+        printf("false");
+        break;
 
         case NODE_NESTED:
         {
@@ -2268,6 +2333,18 @@ void print_node(Node *node)
             //printf(";");
         }
         break;
+
+        case NODE_INCLUDE:
+        {
+            printf("include \"%.*s\"",
+                node->include_path.len,
+                node->include_path.ptr);
+        }
+        break;
+
+        default:
+        printf("(invalid node type %x)", node->type);
+        break;
     }
 }
 
@@ -2281,12 +2358,17 @@ ParseResult parse(String src, WL_Arena *a, char *errbuf, int errmax)
         .errlen=0,
     };
 
+    p.include_tail = &p.include_head;
+
     Node *node = parse_block_stmt(&p, false);
-
     if (node == NULL)
-        return (ParseResult) { NULL, p.errlen };
+        return (ParseResult) { .node=NULL, .includes=NULL, .errlen=p.errlen };
 
-    return (ParseResult) { node, -1 };
+    assert(node->type == NODE_BLOCK);
+    node->type = NODE_GLOBAL_BLOCK;
+
+    *p.include_tail = NULL;
+    return (ParseResult) { .node=node, .includes=p.include_head, .errlen=-1 };
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -2342,6 +2424,8 @@ enum {
     OPCODE_SYSVAR  = 0x2C,
     OPCODE_SYSCALL = 0x2D,
     OPCODE_FOR     = 0x2E,
+    OPCODE_PUSHT   = 0x2F,
+    OPCODE_PUSHFL  = 0x30,
 };
 
 typedef struct {
@@ -2694,6 +2778,9 @@ bool is_expr(Node *node)
         case NODE_VALUE_INT:
         case NODE_VALUE_FLOAT:
         case NODE_VALUE_STR:
+        case NODE_VALUE_NONE:
+        case NODE_VALUE_TRUE:
+        case NODE_VALUE_FALSE:
         case NODE_VALUE_VAR:
         case NODE_VALUE_SYSVAR:
         case NODE_VALUE_HTML:
@@ -3120,6 +3207,24 @@ void assemble_expr(Assembler *a, Node *node, int num_results)
         }
         break;
 
+        case NODE_VALUE_NONE:
+        {
+            append_u8(&a->out, OPCODE_PUSHN);
+        }
+        break;
+
+        case NODE_VALUE_TRUE:
+        {
+            append_u8(&a->out, OPCODE_PUSHT);
+        }
+        break;
+
+        case NODE_VALUE_FALSE:
+        {
+            append_u8(&a->out, OPCODE_PUSHFL);
+        }
+        break;
+
         case NODE_VALUE_VAR:
         {
             String name = node->sval;
@@ -3311,6 +3416,13 @@ void assemble_statement(Assembler *a, Node *node, bool pop_expr)
 {
     switch (node->type) {
 
+        case NODE_INCLUDE:
+        {
+            assert(node->include_root);
+            assemble_statement(a, node->include_root, pop_expr);
+        }
+        break;
+
         case NODE_PRINT:
         {
             append_u8(&a->out, OPCODE_GROUP);
@@ -3389,9 +3501,12 @@ void assemble_statement(Assembler *a, Node *node, bool pop_expr)
         break;
 
         case NODE_BLOCK:
+        case NODE_GLOBAL_BLOCK:
         {
-            int ret = push_scope(a, SCOPE_BLOCK);
-            if (ret < 0) return;
+            if (node->type == NODE_BLOCK) {
+                int ret = push_scope(a, SCOPE_BLOCK);
+                if (ret < 0) return;
+            }
 
             Node *stmt = node->left;
             while (stmt) {
@@ -3399,8 +3514,10 @@ void assemble_statement(Assembler *a, Node *node, bool pop_expr)
                 stmt = stmt->next;
             }
 
-            ret = pop_scope(a);
-            if (ret < 0) return;
+            if (node->type == NODE_BLOCK) {
+                int ret = pop_scope(a);
+                if (ret < 0) return;
+            }
         }
         break;
 
@@ -3914,6 +4031,14 @@ char *print_instruction(char *p, char *data)
 
             printf("SYSCALL \"%.*s\"", (int) len, (char*) data + off);
         }
+        break;
+
+        case OPCODE_PUSHT:
+        printf("PUSHT");
+        break;
+
+        case OPCODE_PUSHFL:
+        printf("PUSHFL");
         break;
     }
 
@@ -4742,6 +4867,18 @@ int step(WL_State *state)
             }
 
             state->eval_stack[state->eval_depth++] = v;
+        }
+        break;
+
+        case OPCODE_PUSHT:
+        {
+            state->eval_stack[state->eval_depth++] = VALUE_TRUE;
+        }
+        break;
+
+        case OPCODE_PUSHFL:
+        {
+            state->eval_stack[state->eval_depth++] = VALUE_FALSE;
         }
         break;
 
@@ -5847,7 +5984,7 @@ void WL_append(WL_State *state)
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
-// src/public.c
+// src/compile.c
 ////////////////////////////////////////////////////////////////////////////////////////
 
 
@@ -5855,8 +5992,23 @@ void WL_append(WL_State *state)
 #include "eval.h"
 #include "parse.h"
 #include "assemble.h"
-#include "WL.h"
+#include "compile.h"
 #endif
+
+#define FILE_LIMIT 32
+
+typedef struct {
+    String file;
+    Node*  root;
+    Node*  includes;
+} CompiledFile;
+
+struct WL_Compiler {
+    WL_Arena*    arena;
+    CompiledFile files[FILE_LIMIT];
+    int          num_files;
+    String       waiting_file;
+};
 
 int WL_streq(WL_String a, char *b, int blen)
 {
@@ -5873,21 +6025,83 @@ int WL_streq(WL_String a, char *b, int blen)
     return 1;
 }
 
-int WL_compile(char *src, int len, WL_Arena arena, WL_Program *program, char *err, int errmax)
+WL_Compiler *WL_Compiler_init(WL_Arena *arena)
 {
-    if (src == NULL) src = "";
-    if (len < 0) len = strlen(src);
+    WL_Compiler *compiler = alloc(arena, (int) sizeof(WL_Compiler), _Alignof(WL_Compiler));
+    if (compiler == NULL)
+        return NULL;
+    compiler->arena = arena;
+    compiler->num_files = 0;
+    compiler->waiting_file = (String) { NULL, 0 };
+    return compiler;
+}
 
-    Node *root;
-    ParseResult pres = parse((String) {src, len}, &arena, err, errmax);
-    if (pres.node == NULL)
-        return -1;
-    root = pres.node;
+void WL_Compiler_free(WL_Compiler *compiler)
+{
+    (void) compiler;
+    // TODO
+}
 
-    AssembleResult ares = assemble(root, &arena, err, errmax);
-    if (ares.errlen)
-        return -1;
-    *program = ares.program;
+WL_CompileResult WL_compile(WL_Compiler *compiler, WL_String file, WL_String content)
+{
+    if (compiler->waiting_file.len > 0)
+        file = (WL_String) { compiler->waiting_file.ptr, compiler->waiting_file.len };
+    else {
+        // TODO: copy file path
+        // file = strdup(file, compiler->arena)
+    }
 
-    return 0;
+    char err[1<<9];
+    ParseResult pres = parse((String) { content.ptr, content.len }, compiler->arena, err, (int) sizeof(err));
+    if (pres.node == NULL) {
+        printf("%s\n", err); // TODO
+        return (WL_CompileResult) { .type=WL_COMPILE_RESULT_ERROR };
+    }
+
+    CompiledFile compiled_file = {
+        .file = { file.ptr, file.len },
+        .root = pres.node,
+        .includes = pres.includes,
+    };
+    compiler->files[compiler->num_files++] = compiled_file;
+
+    for (int i = 0; i < compiler->num_files; i++) {
+
+        Node *include = compiler->files[i].includes;
+        while (include) {
+
+            assert(include->type == NODE_INCLUDE);
+
+            if (include->include_root == NULL) {
+                for (int j = 0; j < compiler->num_files; j++) {
+                    if (streq(include->include_path, compiler->files[j].file)) {
+                        include->include_root = compiler->files[j].root;
+                        break;
+                    }
+                }
+            }
+
+            if (include->include_root == NULL) {
+
+                if (compiler->num_files == FILE_LIMIT) {
+                    assert(0); // TODO
+                }
+
+                // TODO: Make the path relative to the compiled file
+
+                compiler->waiting_file = include->include_path;
+                return (WL_CompileResult) { .type=WL_COMPILE_RESULT_FILE, .path={ include->include_path.ptr, include->include_path.len } };
+            }
+
+            include = include->include_next;
+        }
+    }
+
+    AssembleResult ares = assemble(compiler->files[0].root, compiler->arena, err, (int) sizeof(err));
+    if (ares.errlen) {
+        printf("%s\n", err); // TODO
+        return (WL_CompileResult) { .type=WL_COMPILE_RESULT_ERROR };
+    }
+
+    return (WL_CompileResult) { .type=WL_COMPILE_RESULT_DONE, .program=ares.program };
 }

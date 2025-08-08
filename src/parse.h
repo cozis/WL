@@ -13,9 +13,11 @@ typedef enum {
     NODE_VAR_DECL,
     NODE_PRINT,
     NODE_BLOCK,
+    NODE_GLOBAL_BLOCK,
     NODE_IFELSE,
     NODE_FOR,
     NODE_WHILE,
+    NODE_INCLUDE,
     NODE_SELECT,
     NODE_NESTED,
     NODE_OPER_POS,
@@ -33,6 +35,9 @@ typedef enum {
     NODE_VALUE_INT,
     NODE_VALUE_FLOAT,
     NODE_VALUE_STR,
+    NODE_VALUE_NONE,
+    NODE_VALUE_TRUE,
+    NODE_VALUE_FALSE,
     NODE_VALUE_VAR,
     NODE_VALUE_SYSVAR,
     NODE_VALUE_HTML,
@@ -45,7 +50,6 @@ typedef struct Node Node;
 struct Node {
     NodeType type;
     Node *next;
-    String text;
 
     Node *key;
 
@@ -76,10 +80,15 @@ struct Node {
 
     String var_name;
     Node  *var_value;
+
+    String include_path;
+    Node*  include_next;
+    Node*  include_root;
 };
 
 typedef struct {
     Node *node;
+    Node *includes;
     int   errlen;
 } ParseResult;
 

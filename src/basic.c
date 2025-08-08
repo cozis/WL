@@ -87,3 +87,12 @@ bool grow_alloc(WL_Arena *a, char *p, int new_len)
     a->cur = new_cur;
     return true;
 }
+
+String copystr(String s, WL_Arena *a)
+{
+    char *p = alloc(a, s.len, 1);
+    if (p == NULL)
+        return (String) { NULL, 0 };
+    memcpy(p, s.ptr, s.len);
+    return (String) { p, s.len };
+}

@@ -332,6 +332,9 @@ bool is_expr(Node *node)
         case NODE_VALUE_INT:
         case NODE_VALUE_FLOAT:
         case NODE_VALUE_STR:
+        case NODE_VALUE_NONE:
+        case NODE_VALUE_TRUE:
+        case NODE_VALUE_FALSE:
         case NODE_VALUE_VAR:
         case NODE_VALUE_SYSVAR:
         case NODE_VALUE_HTML:
@@ -758,6 +761,24 @@ void assemble_expr(Assembler *a, Node *node, int num_results)
         }
         break;
 
+        case NODE_VALUE_NONE:
+        {
+            append_u8(&a->out, OPCODE_PUSHN);
+        }
+        break;
+
+        case NODE_VALUE_TRUE:
+        {
+            append_u8(&a->out, OPCODE_PUSHT);
+        }
+        break;
+
+        case NODE_VALUE_FALSE:
+        {
+            append_u8(&a->out, OPCODE_PUSHFL);
+        }
+        break;
+
         case NODE_VALUE_VAR:
         {
             String name = node->sval;
@@ -949,6 +970,13 @@ void assemble_statement(Assembler *a, Node *node, bool pop_expr)
 {
     switch (node->type) {
 
+        case NODE_INCLUDE:
+        {
+            assert(node->include_root);
+            assemble_statement(a, node->include_root, pop_expr);
+        }
+        break;
+
         case NODE_PRINT:
         {
             append_u8(&a->out, OPCODE_GROUP);
@@ -1027,9 +1055,12 @@ void assemble_statement(Assembler *a, Node *node, bool pop_expr)
         break;
 
         case NODE_BLOCK:
+        case NODE_GLOBAL_BLOCK:
         {
-            int ret = push_scope(a, SCOPE_BLOCK);
-            if (ret < 0) return;
+            if (node->type == NODE_BLOCK) {
+                int ret = push_scope(a, SCOPE_BLOCK);
+                if (ret < 0) return;
+            }
 
             Node *stmt = node->left;
             while (stmt) {
@@ -1037,8 +1068,10 @@ void assemble_statement(Assembler *a, Node *node, bool pop_expr)
                 stmt = stmt->next;
             }
 
-            ret = pop_scope(a);
-            if (ret < 0) return;
+            if (node->type == NODE_BLOCK) {
+                int ret = pop_scope(a);
+                if (ret < 0) return;
+            }
         }
         break;
 
@@ -1552,6 +1585,14 @@ char *print_instruction(char *p, char *data)
 
             printf("SYSCALL \"%.*s\"", (int) len, (char*) data + off);
         }
+        break;
+
+        case OPCODE_PUSHT:
+        printf("PUSHT");
+        break;
+
+        case OPCODE_PUSHFL:
+        printf("PUSHFL");
         break;
     }
 

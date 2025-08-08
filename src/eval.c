@@ -246,6 +246,18 @@ int step(WL_State *state)
         }
         break;
 
+        case OPCODE_PUSHT:
+        {
+            state->eval_stack[state->eval_depth++] = VALUE_TRUE;
+        }
+        break;
+
+        case OPCODE_PUSHFL:
+        {
+            state->eval_stack[state->eval_depth++] = VALUE_FALSE;
+        }
+        break;
+
         case OPCODE_PUSHV:
         {
             uint8_t idx = read_u8(state);
