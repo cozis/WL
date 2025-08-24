@@ -1,20 +1,7 @@
-#ifndef WL_AMALGAMATION
-#define WL_AMALGAMATION
+#include <stdint.h>
 
-// This file was generated automatically. Do not modify directly!
-
-////////////////////////////////////////////////////////////////////////////////////////
-// src/compile.h
-////////////////////////////////////////////////////////////////////////////////////////
-
-#ifndef WL_PUBLIC_INCLUDED
-#define WL_PUBLIC_INCLUDED
-
-#ifndef WL_AMALGAMATION
-#include "includes.h"
-#endif
-
-typedef struct WL_State WL_State;
+typedef struct WL_Runtime  WL_Runtime;
+typedef struct WL_Compiler WL_Compiler;
 
 typedef struct {
     char *ptr;
@@ -24,70 +11,79 @@ typedef struct {
 typedef struct {
     char *ptr;
     int   len;
-} WL_Program;
-
-typedef enum {
-    WL_DONE,
-    WL_ERROR,
-    WL_VAR,
-    WL_CALL,
-    WL_OUTPUT,
-} WL_ResultType;
-
-typedef struct {
-    WL_ResultType type;
-    WL_String     str;
-} WL_Result;
+    int   cur;
+} WL_Arena;
 
 typedef struct {
     char *ptr;
     int   len;
-    int   cur;
-} WL_Arena;
-
-typedef struct WL_Compiler WL_Compiler;
+} WL_Program;
 
 typedef enum {
-    WL_COMPILE_RESULT_DONE,
-    WL_COMPILE_RESULT_FILE,
-    WL_COMPILE_RESULT_ERROR,
-} WL_CompileResultType;
+    WL_ADD_ERROR,
+    WL_ADD_AGAIN,
+    WL_ADD_LINK,
+} WL_AddResultType;
 
 typedef struct {
-    WL_CompileResultType type;
-    WL_Program program;
-    WL_String  path;
-} WL_CompileResult;
+    WL_AddResultType type;
+    WL_String        path;
+} WL_AddResult;
 
-WL_Compiler*     WL_Compiler_init (WL_Arena *arena);
-void             WL_Compiler_free (WL_Compiler *compiler);
-WL_CompileResult WL_compile       (WL_Compiler *compiler, WL_String file, WL_String content);
-WL_State*        WL_State_init    (WL_Arena *a, WL_Program p, char *err, int errmax);
-void             WL_State_free    (WL_State *state);
-void             WL_State_trace   (WL_State *state, int trace);
-WL_Result        WL_eval          (WL_State *state);
+typedef enum {
+    WL_EVAL_NONE,
+    WL_EVAL_DONE,
+    WL_EVAL_ERROR,
+    WL_EVAL_OUTPUT,
+    WL_EVAL_SYSVAR,
+    WL_EVAL_SYSCALL,
+} WL_EvalResultType;
 
-void             WL_dump_program(WL_Program program);
+typedef struct {
+    WL_EvalResultType type;
+    WL_String str;
+} WL_EvalResult;
 
-int       WL_streq      (WL_String a, char *b, int blen);
-int       WL_peeknone   (WL_State *state, int off);
-int       WL_peekint    (WL_State *state, int off, long long *x);
-int       WL_peekfloat  (WL_State *state, int off, float *x);
-int       WL_peekstr    (WL_State *state, int off, WL_String *str);
-int       WL_popnone    (WL_State *state);
-int       WL_popint     (WL_State *state, long long *x);
-int       WL_popfloat   (WL_State *state, float *x);
-int       WL_popstr     (WL_State *state, WL_String *str);
-int       WL_popany     (WL_State *state);
-void      WL_select     (WL_State *state);
-void      WL_pushnone   (WL_State *state);
-void      WL_pushint    (WL_State *state, long long x);
-void      WL_pushfloat  (WL_State *state, float x);
-void      WL_pushstr    (WL_State *state, WL_String str);
-void      WL_pusharray  (WL_State *state, int cap);
-void      WL_pushmap    (WL_State *state, int cap);
-void      WL_insert     (WL_State *state);
-void      WL_append     (WL_State *state);
+WL_Compiler*  wl_compiler_init  (WL_Arena *arena);
+WL_AddResult  wl_compiler_add   (WL_Compiler *compiler, WL_String content);
+int           wl_compiler_link  (WL_Compiler *compiler, WL_Program *program);
+WL_String     wl_compiler_error (WL_Compiler *compiler);
+int           wl_dump_ast       (WL_Compiler *compiler, char *dst, int cap);
+void          wl_dump_program   (WL_Program program);
 
-#endif // WL_PUBLIC_INCLUDED
-#endif // WL_AMALGAMATION
+WL_Runtime*   wl_runtime_init   (WL_Arena *arena, WL_Program program);
+WL_EvalResult wl_runtime_eval   (WL_Runtime *rt);
+WL_String     wl_runtime_error  (WL_Runtime *rt);
+void          wl_runtime_dump   (WL_Runtime *rt);
+
+bool wl_streq      (WL_String a, char *b, int blen);
+int  wl_arg_count  (WL_Runtime *rt);
+bool wl_arg_none   (WL_Runtime *rt, int idx);
+bool wl_arg_bool   (WL_Runtime *rt, int idx, bool *x);
+bool wl_arg_s64    (WL_Runtime *rt, int idx, int64_t *x);
+bool wl_arg_f64    (WL_Runtime *rt, int idx, double *x);
+bool wl_arg_str    (WL_Runtime *rt, int idx, WL_String *x);
+bool wl_arg_array  (WL_Runtime *rt, int idx);
+bool wl_arg_map    (WL_Runtime *rt, int idx);
+bool wl_peek_none  (WL_Runtime *rt, int off);
+bool wl_peek_bool  (WL_Runtime *rt, int off, bool *x);
+bool wl_peek_s64   (WL_Runtime *rt, int off, int64_t *x);
+bool wl_peek_f64   (WL_Runtime *rt, int off, double *x);
+bool wl_peek_str   (WL_Runtime *rt, int off, WL_String *x);
+bool wl_pop_any    (WL_Runtime *rt);
+bool wl_pop_none   (WL_Runtime *rt);
+bool wl_pop_bool   (WL_Runtime *rt, bool *x);
+bool wl_pop_s64    (WL_Runtime *rt, int64_t *x);
+bool wl_pop_f64    (WL_Runtime *rt, double *x);
+bool wl_pop_str    (WL_Runtime *rt, WL_String *x);
+void wl_push_none  (WL_Runtime *rt);
+void wl_push_true  (WL_Runtime *rt);
+void wl_push_false (WL_Runtime *rt);
+void wl_push_s64   (WL_Runtime *rt, int64_t x);
+void wl_push_f64   (WL_Runtime *rt, double x);
+void wl_push_str   (WL_Runtime *rt, WL_String x);
+void wl_push_array (WL_Runtime *rt, int cap);
+void wl_push_map   (WL_Runtime *rt, int cap);
+void wl_push_arg   (WL_Runtime *rt, int idx);
+void wl_insert     (WL_Runtime *rt);
+void wl_append     (WL_Runtime *rt);

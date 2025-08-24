@@ -1,127 +1,81 @@
-#include "WL.h"
-
-////////////////////////////////////////////////////////////////////////////////////////
-// src/includes.h
-////////////////////////////////////////////////////////////////////////////////////////
-
-#ifndef WL_INCLUDES_INCLUDED
-#define WL_INCLUDES_INCLUDED
-
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
-#include <stdint.h>
 #include <string.h>
-#include <assert.h>
 #include <stdbool.h>
+#include "wl.h"
 
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#endif
-
-#ifndef _WIN32
-#include <fcntl.h>
-#include <errno.h>
-#include <unistd.h>
-#include <limits.h>
-#include <sys/stat.h>
-#endif
-
-#endif // WL_INCLUDES_INCLUDED
-
-////////////////////////////////////////////////////////////////////////////////////////
-// src/basic.h
-////////////////////////////////////////////////////////////////////////////////////////
-
-#ifndef WL_BASIC_INCLUDED
-#define WL_BASIC_INCLUDED
-
-#ifndef WL_AMALGAMATION
-#include "public.h"
-#endif
+/////////////////////////////////////////////////////////////////////////
+// BASIC
+/////////////////////////////////////////////////////////////////////////
 
 typedef struct {
     char *ptr;
     int   len;
 } String;
 
-#ifdef _WIN32
-#define LLU "llu"
-#define LLD "lld"
-#else
-#define LLU "lu"
-#define LLD "ld"
-#endif
+typedef struct {
+    char *buf;
+    int   cap;
+    bool  yes;
+} Error;
 
-#define S(X) (String) { (X), (int) sizeof(X)-1 }
+#define S(X) (String) { (X), SIZEOF(X)-1 }
+
+#ifdef _WIN32
+#define LLD "lld"
+#define LLU "llu"
+#else
+#define LLD "ld"
+#define LLU "lu"
+#endif
 
 #define MIN(X, Y) ((X) < (Y) ? (X) : (Y))
 #define MAX(X, Y) ((X) > (Y) ? (X) : (Y))
+#define SIZEOF(X) (int) sizeof(X)
+#define ALIGNOF(X) (int) _Alignof(X)
 
-#define COUNT(X) (int) (sizeof(X) / sizeof((X)[0]))
-
-bool is_space(char c);
-bool is_digit(char c);
-bool is_alpha(char c);
-bool is_printable(char c);
-char to_lower(char c);
-bool is_hex_digit(char c);
-int  hex_digit_to_int(char c);
-
-bool streq(String a, String b);
-bool streqcase(String a, String b);
-String copystr(String s, WL_Arena *a);
-
-void *alloc(WL_Arena *a, int len, int align);
-bool grow_alloc(WL_Arena *a, char *p, int new_len);
-
-#endif // WL_BASIC_INCLUDED
-
-////////////////////////////////////////////////////////////////////////////////////////
-// src/basic.c
-////////////////////////////////////////////////////////////////////////////////////////
-
-
-#ifndef WL_AMALGAMATION
-#include "includes.h"
-#include "basic.h"
-#include "public.h"
+#ifndef NDEBUG
+#define UNREACHABLE __builtin_trap()
+#define ASSERT(X) if (!(X)) __builtin_trap();
+#else
+#define UNREACHABLE {}
+#define ASSERT(X) {}
 #endif
 
-bool is_space(char c)
+static bool is_space(char c)
 {
     return c == ' ' || c == '\t' || c == '\r' || c == '\n';
 }
 
-bool is_digit(char c)
+static bool is_digit(char c)
 {
     return c >= '0' && c <= '9';
 }
 
-bool is_alpha(char c)
+static bool is_alpha(char c)
 {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
 }
 
-bool is_printable(char c)
+static bool is_printable(char c)
 {
     return c >= ' ' && c <= '~';
 }
 
-bool is_hex_digit(char c)
+static bool is_hex_digit(char c)
 {
     return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
 }
 
-char to_lower(char c)
+static char to_lower(char c)
 {
     if (c >= 'A' && c <= 'Z')
-        return c - 'A' + 10;
+        return c - 'A' + 'a';
     return c;
 }
 
-int hex_digit_to_int(char c)
+static int hex_digit_to_int(char c)
 {
     if (c >= 'a' && c <= 'f')
         return c - 'a' + 10;
@@ -132,8 +86,7 @@ int hex_digit_to_int(char c)
     return c - '0';
 }
 
-
-bool streq(String a, String b)
+static bool streq(String a, String b)
 {
     if (a.len != b.len)
         return false;
@@ -143,7 +96,7 @@ bool streq(String a, String b)
     return true;
 }
 
-bool streqcase(String a, String b)
+static bool streqcase(String a, String b)
 {
     if (a.len != b.len)
         return false;
@@ -153,7 +106,40 @@ bool streqcase(String a, String b)
     return true;
 }
 
-void *alloc(WL_Arena *a, int len, int align)
+
+#define REPORT(err, fmt, ...) report((err), __FILE__, __LINE__, fmt, ## __VA_ARGS__)
+static void report(Error *err, char *file, int line, char *fmt, ...)
+{
+    if (err->yes) return;
+
+    if (err->cap > 0) {
+
+        va_list args;
+        va_start(args, fmt);
+        int len = vsnprintf(err->buf, err->cap, fmt, args);
+        va_end(args);
+        ASSERT(len >= 0);
+
+        if (err->cap > len) {
+            int ret = snprintf(err->buf + len, err->cap - len,
+                " (reported at %s:%d)", file, line);
+            ASSERT(ret >= 0);
+            len += ret;
+        }
+
+        if (len > err->cap)
+            len = err->cap-1;
+        err->buf[len] = '\0';
+    }
+
+    err->yes = true;
+}
+
+/////////////////////////////////////////////////////////////////////////
+// ARENA
+/////////////////////////////////////////////////////////////////////////
+
+static void *alloc(WL_Arena *a, int len, int align)
 {
     int pad = -(intptr_t) (a->ptr + a->cur) & (align-1);
     if (a->len - a->cur < len + pad)
@@ -163,7 +149,7 @@ void *alloc(WL_Arena *a, int len, int align)
     return ret;
 }
 
-bool grow_alloc(WL_Arena *a, char *p, int new_len)
+static bool grow_alloc(WL_Arena *a, char *p, int new_len)
 {
     int new_cur = (p - a->ptr) + new_len;
     if (new_cur > a->len)
@@ -172,7 +158,7 @@ bool grow_alloc(WL_Arena *a, char *p, int new_len)
     return true;
 }
 
-String copystr(String s, WL_Arena *a)
+static String copystr(String s, WL_Arena *a)
 {
     char *p = alloc(a, s.len, 1);
     if (p == NULL)
@@ -181,170 +167,140 @@ String copystr(String s, WL_Arena *a)
     return (String) { p, s.len };
 }
 
-////////////////////////////////////////////////////////////////////////////////////////
-// src/file.h
-////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
+// WRITER
+/////////////////////////////////////////////////////////////////////////
 
-#ifndef WL_FILE_INCLUDED
-#define WL_FILE_INCLUDED
+typedef struct {
+    char *dst;
+    int   cap;
+    int   len;
+} Writer;
 
-#ifndef WL_AMALGAMATION
-#include "includes.h"
-#include "basic.h"
-#endif
-
-#ifdef _WIN32
-typedef HANDLE File;
-#else
-typedef int File;
-#endif
-
-int  file_open(String path, File *handle, int *size);
-void file_close(File file);
-int  file_read(File file, char *dst, int max);
-int  file_read_all(String path, String *dst);
-
-#endif // WL_FILE_INCLUDED
-
-////////////////////////////////////////////////////////////////////////////////////////
-// src/file.c
-////////////////////////////////////////////////////////////////////////////////////////
-
-#ifndef WL_AMALGAMATION
-#include "includes.h"
-#include "file.h"
-#endif
-
-int file_open(String path, File *handle, int *size)
+static void write_raw_mem(Writer *w, void *ptr, int len)
 {
-    char zt[1<<10];
-    if (path.len >= COUNT(zt))
-        return -1;
-    memcpy(zt, path.ptr, path.len);
-    zt[path.len] = '\0';
-
-#ifdef _WIN32
-    *handle = CreateFileA(
-        zt,
-        GENERIC_READ,
-        FILE_SHARE_READ,
-        NULL,
-        OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL,
-        NULL
-    );
-    if (*handle == INVALID_HANDLE_VALUE) {
-        DWORD error = GetLastError();
-        if (error == ERROR_FILE_NOT_FOUND ||
-            error == ERROR_ACCESS_DENIED)
-            return 1;
-        return -1;
+    if (w->cap > w->len) {
+        int cpy = MIN(w->cap - w->len, len);
+        if (ptr && w->dst)
+            memcpy(w->dst + w->len, ptr, cpy);
     }
-    LARGE_INTEGER fileSize;
-    if (!GetFileSizeEx(*handle, &fileSize)) {
-        CloseHandle(*handle);
-        return -1;
-    }
-    if (fileSize.QuadPart > INT_MAX) {
-        CloseHandle(*handle);
-        return -1;
-    }
-    *size = (int) fileSize.QuadPart;
-#else
-    *handle = open(zt, O_RDONLY);
-    if (*handle < 0) {
-        if (errno == ENOENT)
-            return 1;
-        return -1;
-    }
-    struct stat info;
-    if (fstat(*handle, &info) < 0) {
-        close(*handle);
-        return -1;
-    }
-    if (S_ISDIR(info.st_mode)) {
-        close(*handle);
-        return 1;
-    }
-    if (info.st_size > INT_MAX) {
-        close(*handle);
-        return -1;
-    }
-    *size = (int) info.st_size;
-#endif
-    return 0;
+    w->len += len;
 }
 
-void file_close(File file)
+static void write_raw_u8 (Writer *w, uint8_t  x) { write_raw_mem(w, &x, SIZEOF(x)); }
+static void write_raw_u16(Writer *w, uint16_t x) { write_raw_mem(w, &x, SIZEOF(x)); }
+static void write_raw_u32(Writer *w, uint32_t x) { write_raw_mem(w, &x, SIZEOF(x)); }
+static void write_raw_u64(Writer *w, uint64_t x) { write_raw_mem(w, &x, SIZEOF(x)); }
+static void write_raw_s8 (Writer *w, int8_t   x) { write_raw_mem(w, &x, SIZEOF(x)); }
+static void write_raw_s16(Writer *w, int16_t  x) { write_raw_mem(w, &x, SIZEOF(x)); }
+static void write_raw_s32(Writer *w, int32_t  x) { write_raw_mem(w, &x, SIZEOF(x)); }
+static void write_raw_s64(Writer *w, int64_t  x) { write_raw_mem(w, &x, SIZEOF(x)); }
+static void write_raw_f32(Writer *w, float    x) { write_raw_mem(w, &x, SIZEOF(x)); }
+static void write_raw_f64(Writer *w, double   x) { write_raw_mem(w, &x, SIZEOF(x)); }
+
+static void write_text(Writer *w, String str)
 {
-#ifdef _WIN32
-	CloseHandle(file);
-#else
-	close(file);
-#endif
+    write_raw_mem(w, str.ptr, str.len);
 }
 
-int file_read(File file, char *dst, int max)
-{
-#ifdef _WIN32
-    DWORD num;
-    BOOL ok = ReadFile(file, dst, max, &num, NULL);
-    if (!ok)
-        return -1;
-    return (int) num;
-#else
-    return read(file, dst, max);
-#endif
-}
-
-int file_read_all(String path, String *dst)
+static void write_text_s64(Writer *w, int64_t n)
 {
     int len;
-    File handle;
-    if (file_open(path, &handle, &len) < 0)
-        return -1;
-
-    char *ptr = malloc(len+1);
-    if (ptr == NULL) {
-        file_close(handle);
-        return -1;
-    }
-
-    for (int copied = 0; copied < len; ) {
-        int ret = file_read(handle, ptr + copied, len - copied);
-        if (ret <= 0) {
-            free(ptr);
-            file_close(handle);
-            return -1;
-        }
-        copied += ret;
-    }
-
-    *dst = (String) { ptr, len };
-    file_close(handle);
-    return 0;
+    if (w->len < w->cap)
+        len = snprintf(w->dst + w->len, w->cap - w->len, "%" LLD, n);
+    else
+        len = snprintf(NULL, 0, "%" LLD, n);
+    ASSERT(len >= 0);
+    w->len += len;
 }
 
-////////////////////////////////////////////////////////////////////////////////////////
-// src/parse.h
-////////////////////////////////////////////////////////////////////////////////////////
+static void write_text_f64(Writer *w, double n)
+{
+    int len;
+    if (w->len < w->cap)
+        len = snprintf(w->dst + w->len, w->cap - w->len, "%2.2f", n);
+    else
+        len = snprintf(NULL, 0, "%2.2f", n);
+    ASSERT(len >= 0);
+    w->len += len;
+}
 
-#ifndef WL_PARSE_INCLUDED
-#define WL_PARSE_INCLUDED
+static void patch_mem(Writer *w, void *src, int off, int len)
+{
+    ASSERT(off + len <= w->len);
+    if (off < w->cap) {
+        int cpy = MIN(w->cap - off, len);
+        memcpy(w->dst + off, src, cpy);
+    }
+}
 
-#ifndef WL_AMALGAMATION
-#include "includes.h"
-#include "basic.h"
-#endif
+/////////////////////////////////////////////////////////////////////////
+// PARSER
+/////////////////////////////////////////////////////////////////////////
+
+typedef struct {
+    char *src;
+    int   len;
+    int   cur;
+} Scanner;
 
 typedef enum {
-    NODE_FUNC_DECL,
-    NODE_FUNC_ARG,
-    NODE_FUNC_CALL,
+    TOKEN_END,
+    TOKEN_ERROR,
+    TOKEN_IDENT,
+    TOKEN_KWORD_IF,
+    TOKEN_KWORD_ELSE,
+    TOKEN_KWORD_WHILE,
+    TOKEN_KWORD_FOR,
+    TOKEN_KWORD_IN,
+    TOKEN_KWORD_PROCEDURE,
+    TOKEN_KWORD_LET,
+    TOKEN_KWORD_NONE,
+    TOKEN_KWORD_TRUE,
+    TOKEN_KWORD_FALSE,
+    TOKEN_KWORD_INCLUDE,
+    TOKEN_KWORD_LEN,
+    TOKEN_VALUE_FLOAT,
+    TOKEN_VALUE_INT,
+    TOKEN_VALUE_STR,
+    TOKEN_OPER_EQL,
+    TOKEN_OPER_NQL,
+    TOKEN_OPER_LSS,
+    TOKEN_OPER_GRT,
+    TOKEN_OPER_ADD,
+    TOKEN_OPER_SUB,
+    TOKEN_OPER_MUL,
+    TOKEN_OPER_DIV,
+    TOKEN_OPER_MOD,
+    TOKEN_OPER_ASS,
+    TOKEN_OPER_SHOVEL,
+    TOKEN_PAREN_OPEN,
+    TOKEN_PAREN_CLOSE,
+    TOKEN_BRACKET_OPEN,
+    TOKEN_BRACKET_CLOSE,
+    TOKEN_CURLY_OPEN,
+    TOKEN_CURLY_CLOSE,
+    TOKEN_DOT,
+    TOKEN_COMMA,
+    TOKEN_COLON,
+    TOKEN_DOLLAR,
+    TOKEN_NEWLINE,
+} TokType;
+
+typedef struct {
+    TokType type;
+    int64_t ival;
+    double  fval;
+    String  sval;
+} Token;
+
+typedef enum {
+    NODE_PROCEDURE_DECL,
+    NODE_PROCEDURE_ARG,
+    NODE_PROCEDURE_CALL,
     NODE_VAR_DECL,
-    NODE_PRINT,
-    NODE_BLOCK,
-    NODE_GLOBAL_BLOCK,
+    NODE_COMPOUND,
+    NODE_GLOBAL,
     NODE_IFELSE,
     NODE_FOR,
     NODE_WHILE,
@@ -364,6 +320,7 @@ typedef enum {
     NODE_OPER_MUL,
     NODE_OPER_DIV,
     NODE_OPER_MOD,
+    NODE_OPER_SHOVEL,
     NODE_VALUE_INT,
     NODE_VALUE_FLOAT,
     NODE_VALUE_STR,
@@ -375,7 +332,6 @@ typedef enum {
     NODE_VALUE_HTML,
     NODE_VALUE_ARRAY,
     NODE_VALUE_MAP,
-    NODE_HTML_PARAM,
 } NodeType;
 
 typedef struct Node Node;
@@ -388,30 +344,34 @@ struct Node {
     Node *left;
     Node *right;
 
+    Node *child;
+
     uint64_t ival;
-    double   dval;
+    double   fval;
     String   sval;
 
-    Node *params;
-    Node *child;
-    bool  no_body;
+    String html_tag;
+    Node*  html_attr;
+    Node*  html_child;
+    bool   html_body;
 
-    Node *cond;
+    Node *if_cond;
+    Node *if_branch1;
+    Node *if_branch2;
 
-    String tagname;
-    String attr_name;
-    Node  *attr_value;
+    Node *while_cond;
+    Node *while_body;
 
     String for_var1;
     String for_var2;
-    Node *for_set;
+    Node*  for_set;
 
-    String func_name;
-    Node  *func_args;
-    Node  *func_body;
+    String proc_name;
+    Node*  proc_args;
+    Node*  proc_body;
 
     String var_name;
-    Node  *var_value;
+    Node*  var_value;
 
     String include_path;
     Node*  include_next;
@@ -424,82 +384,9 @@ typedef struct {
     int   errlen;
 } ParseResult;
 
-void print_node(Node *node);
-ParseResult parse(String src, WL_Arena *a, char *errbuf, int errmax);
-
-#endif // WL_PARSE_INCLUDED
-
-////////////////////////////////////////////////////////////////////////////////////////
-// src/parse.c
-////////////////////////////////////////////////////////////////////////////////////////
-
-
-#ifndef WL_AMALGAMATION
-#include "parse.h"
-#endif
-
-typedef struct {
-    char *src;
-    int   len;
-    int   cur;
-} Scanner;
-
-typedef enum {
-    TOKEN_END,
-    TOKEN_ERROR,
-    TOKEN_IDENT,
-    TOKEN_KWORD_IF,
-    TOKEN_KWORD_ELSE,
-    TOKEN_KWORD_WHILE,
-    TOKEN_KWORD_FOR,
-    TOKEN_KWORD_IN,
-    TOKEN_KWORD_FUN,
-    TOKEN_KWORD_LET,
-    TOKEN_KWORD_PRINT,
-    TOKEN_KWORD_NONE,
-    TOKEN_KWORD_TRUE,
-    TOKEN_KWORD_FALSE,
-    TOKEN_KWORD_INCLUDE,
-    TOKEN_KWORD_LEN,
-    TOKEN_VALUE_FLOAT,
-    TOKEN_VALUE_INT,
-    TOKEN_VALUE_STR,
-    TOKEN_OPER_EQL,
-    TOKEN_OPER_NQL,
-    TOKEN_OPER_LSS,
-    TOKEN_OPER_GRT,
-    TOKEN_OPER_ADD,
-    TOKEN_OPER_SUB,
-    TOKEN_OPER_MUL,
-    TOKEN_OPER_DIV,
-    TOKEN_OPER_MOD,
-    TOKEN_OPER_ASS,
-    TOKEN_PAREN_OPEN,
-    TOKEN_PAREN_CLOSE,
-    TOKEN_BRACKET_OPEN,
-    TOKEN_BRACKET_CLOSE,
-    TOKEN_CURLY_OPEN,
-    TOKEN_CURLY_CLOSE,
-    TOKEN_DOT,
-    TOKEN_COMMA,
-    TOKEN_COLON,
-    TOKEN_DOLLAR,
-    TOKEN_NEWLINE,
-} TokType;
-
-typedef struct {
-    TokType type;
-    union {
-        int64_t  ival;
-        uint64_t uval;
-        double   dval;
-        String   sval;
-    };
-} Token;
-
 typedef struct {
     Scanner   s;
-    WL_Arena* a;
+    WL_Arena*    arena;
     char*     errbuf;
     int       errmax;
     int       errlen;
@@ -507,7 +394,7 @@ typedef struct {
     Node**    include_tail;
 } Parser;
 
-bool consume_str(Scanner *s, String x)
+static bool consume_str(Scanner *s, String x)
 {
     if (x.len == 0)
         return false;
@@ -523,90 +410,61 @@ bool consume_str(Scanner *s, String x)
     return true;
 }
 
-String tok2str(Token token, char *buf, int max)
+static void write_token(Writer *w, Token token)
 {
     switch (token.type) {
 
-        case TOKEN_END:
-        return S("EOF");
-
-        case TOKEN_ERROR:
-        return S("ERROR");
-
-        case TOKEN_IDENT:
-        {
-            int len = snprintf(buf, max, "%.*s", token.sval.len, token.sval.ptr);
-            return (String) { buf, len };
-        }
-        break;
-
-        case TOKEN_KWORD_IF: return S("if");
-        case TOKEN_KWORD_ELSE: return S("else");
-        case TOKEN_KWORD_WHILE: return S("while");
-        case TOKEN_KWORD_FOR: return S("for");
-        case TOKEN_KWORD_IN: return S("in");
-        case TOKEN_KWORD_FUN: return S("fun");
-        case TOKEN_KWORD_LET: return S("let");
-        case TOKEN_KWORD_PRINT: return S("print");
-        case TOKEN_KWORD_NONE: return S("none");
-        case TOKEN_KWORD_TRUE: return S("true");
-        case TOKEN_KWORD_FALSE: return S("false");
-        case TOKEN_KWORD_INCLUDE: return S("include");
-        case TOKEN_KWORD_LEN: return S("len");
-
-        case TOKEN_VALUE_FLOAT:
-        {
-            int len = snprintf(buf, max, "%lf", token.dval);
-            return (String) { buf, len };
-        }
-        break;
-
-        case TOKEN_VALUE_INT:
-        {
-            int len = snprintf(buf, max, "%" LLU, token.uval);
-            return (String) { buf, len };
-        }
-        break;
+        default                 : write_text(w, S("???"));       break;
+        case TOKEN_END          : write_text(w, S("<EOF>"));     break;
+        case TOKEN_ERROR        : write_text(w, S("<ERROR>"));   break;
+        case TOKEN_IDENT        : write_text(w, token.sval);     break;
+        case TOKEN_KWORD_IF     : write_text(w, S("if"));        break;
+        case TOKEN_KWORD_ELSE   : write_text(w, S("else"));      break;
+        case TOKEN_KWORD_WHILE  : write_text(w, S("while"));     break;
+        case TOKEN_KWORD_FOR    : write_text(w, S("for"));       break;
+        case TOKEN_KWORD_IN     : write_text(w, S("in"));        break;
+        case TOKEN_KWORD_PROCEDURE: write_text(w, S("procedure")); break;
+        case TOKEN_KWORD_LET    : write_text(w, S("let"));       break;
+        case TOKEN_KWORD_NONE   : write_text(w, S("none"));      break;
+        case TOKEN_KWORD_TRUE   : write_text(w, S("true"));      break;
+        case TOKEN_KWORD_FALSE  : write_text(w, S("false"));     break;
+        case TOKEN_KWORD_INCLUDE: write_text(w, S("include"));   break;
+        case TOKEN_KWORD_LEN    : write_text(w, S("len"));       break;
+        case TOKEN_VALUE_FLOAT  : write_text_f64(w, token.fval); break;
+        case TOKEN_VALUE_INT    : write_text_s64(w, token.ival); break;
+        case TOKEN_OPER_ASS     : write_text(w, S("="));         break;
+        case TOKEN_OPER_EQL     : write_text(w, S("=="));        break;
+        case TOKEN_OPER_NQL     : write_text(w, S("!="));        break;
+        case TOKEN_OPER_LSS     : write_text(w, S("<"));         break;
+        case TOKEN_OPER_GRT     : write_text(w, S(">"));         break;
+        case TOKEN_OPER_ADD     : write_text(w, S("+"));         break;
+        case TOKEN_OPER_SUB     : write_text(w, S("-"));         break;
+        case TOKEN_OPER_MUL     : write_text(w, S("*"));         break;
+        case TOKEN_OPER_DIV     : write_text(w, S("/"));         break;
+        case TOKEN_OPER_MOD     : write_text(w, S("%"));         break;
+        case TOKEN_OPER_SHOVEL  : write_text(w, S("<<"));        break;
+        case TOKEN_PAREN_OPEN   : write_text(w, S("("));         break;
+        case TOKEN_PAREN_CLOSE  : write_text(w, S(")"));         break;
+        case TOKEN_BRACKET_OPEN : write_text(w, S("["));         break;
+        case TOKEN_BRACKET_CLOSE: write_text(w, S("]"));         break;
+        case TOKEN_CURLY_OPEN   : write_text(w, S("{"));         break;
+        case TOKEN_CURLY_CLOSE  : write_text(w, S("}"));         break;
+        case TOKEN_DOT          : write_text(w, S("."));         break;
+        case TOKEN_COMMA        : write_text(w, S(","));         break;
+        case TOKEN_COLON        : write_text(w, S(":"));         break;
+        case TOKEN_DOLLAR       : write_text(w, S("$"));         break;
+        case TOKEN_NEWLINE      : write_text(w, S("\\n"));       break;
 
         case TOKEN_VALUE_STR:
-        {
-            int len = snprintf(buf, max, "\"%.*s\"", token.sval.len, token.sval.ptr);
-            return (String) { buf, len };
-        }
+        write_text(w, S("\""));
+        write_text(w, token.sval); // TODO: Escape
+        write_text(w, S("\""));
         break;
 
-        case TOKEN_OPER_ASS: return S("==");
-        case TOKEN_OPER_EQL: return S("==");
-        case TOKEN_OPER_NQL: return S("!=");
-        case TOKEN_OPER_LSS: return S("<");
-        case TOKEN_OPER_GRT: return S(">");
-        case TOKEN_OPER_ADD: return S("+");
-        case TOKEN_OPER_SUB: return S("-");
-        case TOKEN_OPER_MUL: return S("*");
-        case TOKEN_OPER_DIV: return S("/");
-        case TOKEN_OPER_MOD: return S("%");
-
-        case TOKEN_PAREN_OPEN: return S("(");
-        case TOKEN_PAREN_CLOSE: return S(")");
-
-        case TOKEN_BRACKET_OPEN: return S("[");
-        case TOKEN_BRACKET_CLOSE: return S("]");
-
-        case TOKEN_CURLY_OPEN: return S("{");
-        case TOKEN_CURLY_CLOSE: return S("}");
-
-        case TOKEN_DOT: return S(".");
-        case TOKEN_COMMA: return S(",");
-        case TOKEN_COLON: return S(":");
-        case TOKEN_DOLLAR: return S("$");
-
-        case TOKEN_NEWLINE: return S("\\n");
     }
-
-    return S("???");
 }
 
-void parser_report(Parser *p, char *fmt, ...)
+static void parser_report(Parser *p, char *fmt, ...)
 {
     if (p->errmax == 0 || p->errlen > 0)
         return;
@@ -620,25 +478,21 @@ void parser_report(Parser *p, char *fmt, ...)
     }
 
     int len = snprintf(p->errbuf, p->errmax, "Error (line %d): ", line);
-    if (len < 0) {
-        // TODO
-    }
+    ASSERT(len >= 0);
 
     va_list args;
     va_start(args, fmt);
     int ret = vsnprintf(p->errbuf + len, p->errmax - len, fmt, args);
     va_end(args);
-    if (ret < 0) {
-        // TODO
-    }
+    ASSERT(ret >= 0);
     len += ret;
 
     p->errlen = len;
 }
 
-Node *alloc_node(Parser *p)
+static Node *alloc_node(Parser *p)
 {
-    Node *n = alloc(p->a, sizeof(Node), _Alignof(Node));
+    Node *n = alloc(p->arena, sizeof(Node), _Alignof(Node));
     if (n == NULL) {
         parser_report(p, "Out of memory");
         return NULL;
@@ -647,7 +501,7 @@ Node *alloc_node(Parser *p)
     return n;
 }
 
-Token next_token(Parser *p)
+static Token next_token(Parser *p)
 {
     for (;;) {
         while (p->s.cur < p->s.len && is_space(p->s.src[p->s.cur]))
@@ -684,9 +538,8 @@ Token next_token(Parser *p)
         if (streq(kword, S("while")))   return (Token) { .type=TOKEN_KWORD_WHILE   };
         if (streq(kword, S("for")))     return (Token) { .type=TOKEN_KWORD_FOR     };
         if (streq(kword, S("in")))      return (Token) { .type=TOKEN_KWORD_IN      };
-        if (streq(kword, S("fun")))     return (Token) { .type=TOKEN_KWORD_FUN     };
+        if (streq(kword, S("procedure"))) return (Token) { .type=TOKEN_KWORD_PROCEDURE };
         if (streq(kword, S("let")))     return (Token) { .type=TOKEN_KWORD_LET     };
-        if (streq(kword, S("print")))   return (Token) { .type=TOKEN_KWORD_PRINT   };
         if (streq(kword, S("none")))    return (Token) { .type=TOKEN_KWORD_NONE    };
         if (streq(kword, S("true")))    return (Token) { .type=TOKEN_KWORD_TRUE    };
         if (streq(kword, S("false")))   return (Token) { .type=TOKEN_KWORD_FALSE   };
@@ -720,7 +573,7 @@ Token next_token(Parser *p)
                 buf += q * d;
             } while (p->s.cur < p->s.len && is_digit(p->s.src[p->s.cur]));
 
-            return (Token) { .type=TOKEN_VALUE_FLOAT, .dval=buf };
+            return (Token) { .type=TOKEN_VALUE_FLOAT, .fval=buf };
 
         } else {
 
@@ -734,7 +587,7 @@ Token next_token(Parser *p)
                 buf = buf * 10 + d;
             } while (p->s.cur < p->s.len && is_digit(p->s.src[p->s.cur]));
 
-            return (Token) { .type=TOKEN_VALUE_INT, .uval=buf };
+            return (Token) { .type=TOKEN_VALUE_INT, .ival=buf };
         }
     }
 
@@ -756,9 +609,9 @@ Token next_token(Parser *p)
             int substr_len = p->s.cur - substr_off;
 
             if (buf == NULL)
-                buf = alloc(p->a, substr_len+1, 1);
+                buf = alloc(p->arena, substr_len+1, 1);
             else
-                if (!grow_alloc(p->a, buf, len + substr_len+1))
+                if (!grow_alloc(p->arena, buf, len + substr_len+1))
                     buf = NULL;
 
             if (buf == NULL) {
@@ -827,6 +680,7 @@ Token next_token(Parser *p)
         return (Token) { .type=TOKEN_VALUE_STR, .sval=(String) { .ptr=buf, .len=len } };
     }
 
+    if (consume_str(&p->s, S("<<"))) return (Token) { .type=TOKEN_OPER_SHOVEL };
     if (consume_str(&p->s, S("=="))) return (Token) { .type=TOKEN_OPER_EQL };
     if (consume_str(&p->s, S("!="))) return (Token) { .type=TOKEN_OPER_NQL };
     if (consume_str(&p->s, S("<")))  return (Token) { .type=TOKEN_OPER_LSS };
@@ -853,7 +707,7 @@ Token next_token(Parser *p)
     return (Token) { .type=TOKEN_ERROR };
 }
 
-Token next_token_or_newline(Parser *p)
+static Token next_token_or_newline(Parser *p)
 {
     int peek = p->s.cur;
     while (peek < p->s.len && is_space(p->s.src[peek]) && p->s.src[peek] != '\n')
@@ -873,104 +727,92 @@ enum {
     IGNORE_DIV = 1 << 2,
 };
 
-Node *parse_stmt(Parser *p, int opflags);
-Node *parse_expr(Parser *p, int opflags);
+static Node *parse_stmt(Parser *p, int opflags);
+static Node *parse_expr(Parser *p, int opflags);
 
-Node *parse_html(Parser *p)
+static Node *parse_html(Parser *p)
 {
     // NOTE: The first < was already consumed
-    
+
     Token t = next_token(p);
     if (t.type != TOKEN_IDENT) {
-        char buf[1<<8];
-        String ts = tok2str(t, buf, COUNT(buf));
-        parser_report(p, "HTML tag doesn't start with a name (got '%.*s' instead)", ts.len, ts.ptr);
+        parser_report(p, "HTML tag doesn't start with a name");
         return NULL;
     }
     String tagname = t.sval;
 
-    Node *param_head;
-    Node **param_tail = &param_head;
+    Node *attr_head;
+    Node **attr_tail = &attr_head;
 
     bool no_body = false;
+    Scanner *s = &p->s;
     for (;;) {
 
-        String attr_name;
-        Node  *attr_value;
+        int off = s->cur;
 
-        t = next_token(p);
+        bool quotes = false;
+        while (s->cur < s->len && s->src[s->cur] != '\\' && (quotes || (s->src[s->cur] != '/' && s->src[s->cur] != '>'))) {
+            if (s->src[s->cur] == '"')
+                quotes = !quotes;
+            s->cur++;
+        }
 
-        if (t.type == TOKEN_OPER_GRT)
+        if (s->cur > off) {
+
+            Node *child = alloc_node(p);
+            if (child == NULL)
+                return NULL;
+
+            child->type = NODE_VALUE_STR;
+            child->sval = (String) { p->s.src + off, p->s.cur - off };
+
+            *attr_tail = child;
+            attr_tail = &child->next;
+        }
+
+        if (s->cur == s->len) {
+            ASSERT(0); // TODO
+        }
+        s->cur++;
+
+        if (s->src[s->cur-1] == '>')
             break;
 
-        if (t.type == TOKEN_OPER_DIV) {
-            t = next_token(p);
-            if (t.type != TOKEN_OPER_GRT) {
-                parser_report(p, "Invalid token '/' inside an HTML tag");
-                return NULL;
+        if (s->src[s->cur-1] == '/') {
+            while (s->cur < s->len && is_space(s->src[s->cur]))
+                s->cur++;
+            if (s->cur == s->len || s->src[s->cur] != '>') {
+                ASSERT(0); // TODO
             }
+            s->cur++;
             no_body = true;
             break;
         }
 
-        if (t.type != TOKEN_IDENT) {
-            parser_report(p, "Invalid token inside HTML tag");
-            return NULL;
-        }
-        attr_name = t.sval;
+        ASSERT(s->src[s->cur-1] == '\\');
 
-        Scanner saved = p->s;
-        t = next_token(p);
-        if (t.type == TOKEN_OPER_ASS) {
-
-            attr_value = parse_expr(p, IGNORE_GRT | IGNORE_DIV);
-            if (attr_value == NULL)
-                return NULL;
-
-        } else {
-            p->s = saved;
-            attr_value = NULL;
-        }
-
-        Node *child = alloc_node(p);
+        Node *child = parse_stmt(p, IGNORE_GRT | IGNORE_DIV);
         if (child == NULL)
             return NULL;
 
-        child->type = NODE_HTML_PARAM;
-        child->attr_name  = attr_name;
-        child->attr_value = attr_value;
-
-        *param_tail = child;
-        param_tail = &child->next;
+        *attr_tail = child;
+        attr_tail = &child->next;
     }
 
-    *param_tail = NULL;
+    *attr_tail = NULL;
 
-    Node *head;
-    Node **tail = &head;
+    Node *child_head;
+    Node **child_tail = &child_head;
 
-    if (!no_body) for (;;) {
-
+    if (no_body == false)
         for (;;) {
 
-            int off = p->s.cur;
+            int off = s->cur;
 
-            for (;;) {
+            while (s->cur < s->len && s->src[s->cur] != '\\' && s->src[s->cur] != '<')
+                s->cur++;
 
-                while (p->s.cur < p->s.len && p->s.src[p->s.cur] != '<' && p->s.src[p->s.cur] != '\\')
-                    p->s.cur++;
-
-                if (!consume_str(&p->s, S("<!--")))
-                    break;
-
-                while (p->s.cur < p->s.len) {
-                    if (consume_str(&p->s, S("-->")))
-                        break;
-                    p->s.cur++;
-                }
-            }
-
-            if (p->s.cur > off) {
+            if (s->cur > off) {
 
                 Node *child = alloc_node(p);
                 if (child == NULL)
@@ -979,71 +821,75 @@ Node *parse_html(Parser *p)
                 child->type = NODE_VALUE_STR;
                 child->sval = (String) { p->s.src + off, p->s.cur - off };
 
-                *tail = child;
-                tail = &child->next;
+                *child_tail = child;
+                child_tail = &child->next;
             }
 
-            if (p->s.cur == p->s.len || p->s.src[p->s.cur] == '<')
-                break;
+            if (s->cur == s->len) {
+                ASSERT(0); // TODO
+            }
+            s->cur++;
 
-            p->s.cur++; // Consume "\"
+            if (s->src[s->cur-1] == '<') {
 
-            {
+                Scanner saved = *s;
+                t = next_token(p);
+                if (t.type == TOKEN_OPER_DIV) {
+
+                    t = next_token(p);
+                    if (t.type != TOKEN_IDENT) {
+                        ASSERT(0); // TODO
+                    }
+                    String closing_tagname = t.sval;
+
+                    if (!streq(closing_tagname, tagname)) {
+                        ASSERT(0); // TODO
+                    }
+
+                    t = next_token(p);
+                    if (t.type != TOKEN_OPER_GRT) {
+                        ASSERT(0);
+                    }
+
+                    break;
+                }
+
+                *s = saved;
+
+                Node *child = parse_html(p);
+                if (child == NULL)
+                    return NULL;
+
+                *child_tail = child;
+                child_tail = &child->next;
+
+            } else {
+
                 Node *child = parse_stmt(p, IGNORE_LSS);
                 if (child == NULL)
                     return NULL;
 
-                *tail = child;
-                tail = &child->next;
+                *child_tail = child;
+                child_tail = &child->next;
             }
         }
 
-        if (p->s.cur == p->s.len) {
-            parser_report(p, "Missing closing HTML tag");
-            return NULL;
-        }
-        p->s.cur++; // Consume <
-
-        Scanner saved = p->s;
-        t = next_token(p);
-        if (t.type == TOKEN_OPER_DIV) {
-            t = next_token(p);
-            if (t.type == TOKEN_IDENT && streqcase(t.sval, tagname)) {
-                t = next_token(p);
-                if (t.type != TOKEN_OPER_GRT) {
-                    parser_report(p, "Unexpected token in closing HTML tag");
-                    return NULL;
-                }
-                break;
-            }
-        }
-
-        p->s = saved;
-
-        Node *child = parse_html(p);
-        if (child == NULL)
-            return NULL;
-
-        *tail = child;
-        tail = &child->next;
-    }
-
-    *tail = NULL;
+    *child_tail = NULL;
 
     Node *parent = alloc_node(p);
     if (parent == NULL)
         return NULL;
 
     parent->type = NODE_VALUE_HTML;
-    parent->tagname = tagname;
-    parent->params = param_head;
-    parent->child  = head;
-    parent->no_body = no_body;
+    parent->html_tag   = tagname;
+    parent->html_attr  = attr_head;
+    parent->html_child = child_head;
+    parent->html_body  = !no_body;
 
     return parent;
 }
 
-Node *parse_array(Parser *p)
+static Node *parse_array(Parser *p)
 {
     // Left bracket already consumed
 
@@ -1091,7 +937,7 @@ Node *parse_array(Parser *p)
     return parent;
 }
 
-Node *parse_map(Parser *p)
+static Node *parse_map(Parser *p)
 {
     // Left bracket already consumed
 
@@ -1167,11 +1013,16 @@ Node *parse_map(Parser *p)
     return parent;
 }
 
-int precedence(Token t, int flags)
+static int precedence(Token t, int flags)
 {
     switch (t.type) {
 
         case TOKEN_OPER_ASS:
+        return 1;
+
+        case TOKEN_OPER_SHOVEL:
+        if (flags & IGNORE_LSS)
+            return -1;
         return 1;
 
         case TOKEN_OPER_EQL:
@@ -1208,12 +1059,12 @@ int precedence(Token t, int flags)
     return -1;
 }
 
-bool right_associative(Token t)
+static bool right_associative(Token t)
 {
     return t.type == TOKEN_OPER_ASS;
 }
 
-Node *parse_atom(Parser *p)
+static Node *parse_atom(Parser *p)
 {
     Token t = next_token(p);
 
@@ -1290,7 +1141,7 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             node->type = NODE_VALUE_INT;
-            node->ival = t.uval;
+            node->ival = t.ival;
 
             ret = node;
         }
@@ -1303,7 +1154,7 @@ Node *parse_atom(Parser *p)
                 return NULL;
 
             node->type = NODE_VALUE_FLOAT;
-            node->dval = t.dval;
+            node->fval = t.fval;
 
             ret = node;
         }
@@ -1434,9 +1285,7 @@ Node *parse_atom(Parser *p)
 
         default:
         {
-            char buf[1<<8];
-            String str = tok2str(t, buf, COUNT(buf));
-            parser_report(p, "Invalid token \'%.*s\' inside expression", str.len, str.ptr);
+            parser_report(p, "Invalid token inside expression");
         }
         return NULL;
     }
@@ -1516,7 +1365,7 @@ Node *parse_atom(Parser *p)
                         break;
 
                     if (t.type != TOKEN_COMMA) {
-                        parser_report(p, "Expected ',' after argument in function call");
+                        parser_report(p, "Expected ',' after argument in procedure call");
                         return NULL;
                     }
                 }
@@ -1528,7 +1377,7 @@ Node *parse_atom(Parser *p)
             if (parent == NULL)
                 return NULL;
 
-            parent->type = NODE_FUNC_CALL;
+            parent->type = NODE_PROCEDURE_CALL;
             parent->left = ret;
             parent->right = arg_head;
 
@@ -1543,7 +1392,7 @@ Node *parse_atom(Parser *p)
     return ret;
 }
 
-Node *parse_expr_inner(Parser *p, Node *left, int min_prec, int flags)
+static Node *parse_expr_inner(Parser *p, Node *left, int min_prec, int flags)
 {
     for (;;) {
 
@@ -1595,7 +1444,8 @@ Node *parse_expr_inner(Parser *p, Node *left, int min_prec, int flags)
             case TOKEN_OPER_MUL: parent->type = NODE_OPER_MUL; break;
             case TOKEN_OPER_DIV: parent->type = NODE_OPER_DIV; break;
             case TOKEN_OPER_MOD: parent->type = NODE_OPER_MOD; break;
-            default: 
+            case TOKEN_OPER_SHOVEL: parent->type = NODE_OPER_SHOVEL; break;
+            default:
             parser_report(p, "Operator not implemented");
             return NULL;
         }
@@ -1606,7 +1456,7 @@ Node *parse_expr_inner(Parser *p, Node *left, int min_prec, int flags)
     return left;
 }
 
-Node *parse_expr(Parser *p, int flags)
+static Node *parse_expr(Parser *p, int flags)
 {
     Node *left = parse_atom(p);
     if (left == NULL)
@@ -1615,7 +1465,7 @@ Node *parse_expr(Parser *p, int flags)
     return parse_expr_inner(p, left, 0, flags);
 }
 
-Node *parse_expr_stmt(Parser *p, int opflags)
+static Node *parse_expr_stmt(Parser *p, int opflags)
 {
     Node *e = parse_expr(p, opflags);
     if (e == NULL)
@@ -1624,7 +1474,7 @@ Node *parse_expr_stmt(Parser *p, int opflags)
     return e;
 }
 
-Node *parse_ifelse_stmt(Parser *p, int opflags)
+static Node *parse_ifelse_stmt(Parser *p, int opflags)
 {
     Token t = next_token(p);
     if (t.type != TOKEN_KWORD_IF) {
@@ -1665,14 +1515,14 @@ Node *parse_ifelse_stmt(Parser *p, int opflags)
         return NULL;
 
     parent->type = NODE_IFELSE;
-    parent->left = if_stmt;
-    parent->right = else_stmt;
-    parent->cond = cond;
+    parent->if_cond = cond;
+    parent->if_branch1 = if_stmt;
+    parent->if_branch2 = else_stmt;
 
     return parent;
 }
 
-Node *parse_for_stmt(Parser *p, int opflags)
+static Node *parse_for_stmt(Parser *p, int opflags)
 {
     Token t = next_token(p);
     if (t.type != TOKEN_KWORD_FOR) {
@@ -1734,7 +1584,7 @@ Node *parse_for_stmt(Parser *p, int opflags)
     return parent;
 }
 
-Node *parse_while_stmt(Parser *p, int opflags)
+static Node *parse_while_stmt(Parser *p, int opflags)
 {
     Token t = next_token(p);
     if (t.type != TOKEN_KWORD_WHILE) {
@@ -1762,17 +1612,18 @@ Node *parse_while_stmt(Parser *p, int opflags)
 
     parent->type = NODE_WHILE;
     parent->left = stmt;
-    parent->cond = cond;
+    parent->while_cond = cond;
+    parent->while_body = stmt;
 
     return parent;
 }
 
-Node *parse_block_stmt(Parser *p, bool curly)
+static Node *parse_compound_stmt(Parser *p, bool global)
 {
-    if (curly) {
+    if (!global) {
         Token t = next_token(p);
         if (t.type != TOKEN_CURLY_OPEN) {
-            parser_report(p, "Missing '{' at the start of a block statement");
+            parser_report(p, "Missing '{' at the start of a compound statement");
             return NULL;
         }
     }
@@ -1784,7 +1635,7 @@ Node *parse_block_stmt(Parser *p, bool curly)
 
         Scanner saved = p->s;
         Token t = next_token(p);
-        if (curly) {
+        if (!global) {
             if (t.type == TOKEN_CURLY_CLOSE)
                 break;
         } else {
@@ -1807,30 +1658,30 @@ Node *parse_block_stmt(Parser *p, bool curly)
     if (parent == NULL)
         return NULL;
 
-    parent->type = NODE_BLOCK;
+    parent->type = global ? NODE_GLOBAL : NODE_COMPOUND;
     parent->left = head;
 
     return parent;
 }
 
-Node *parse_func_decl(Parser *p, int opflags)
+static Node *parse_proc_decl(Parser *p, int opflags)
 {
     Token t = next_token(p);
-    if (t.type != TOKEN_KWORD_FUN) {
-        parser_report(p, "Missing keyword 'fun' at the start of a function declaration");
+    if (t.type != TOKEN_KWORD_PROCEDURE) {
+        parser_report(p, "Missing keyword 'procedure' at the start of a procedure declaration");
         return NULL;
     }
 
     t = next_token(p);
     if (t.type != TOKEN_IDENT) {
-        parser_report(p, "Missing function name after 'fun' keyword");
+        parser_report(p, "Missing procedure name after 'procedure' keyword");
         return NULL;
     }
     String name = t.sval;
 
     t = next_token(p);
     if (t.type != TOKEN_PAREN_OPEN) {
-        parser_report(p, "Missing '(' after function name in declaration");
+        parser_report(p, "Missing '(' after procedure name in declaration");
         return NULL;
     }
 
@@ -1846,7 +1697,7 @@ Node *parse_func_decl(Parser *p, int opflags)
 
             t = next_token(p);
             if (t.type != TOKEN_IDENT) {
-                parser_report(p, "Missing argument name in function declaration");
+                parser_report(p, "Missing argument name in procedure declaration");
                 return NULL;
             }
             String argname = t.sval;
@@ -1855,7 +1706,7 @@ Node *parse_func_decl(Parser *p, int opflags)
             if (node == NULL)
                 return NULL;
 
-            node->type = NODE_FUNC_ARG;
+            node->type = NODE_PROCEDURE_ARG;
             node->sval = argname;
 
             *arg_tail = node;
@@ -1884,15 +1735,15 @@ Node *parse_func_decl(Parser *p, int opflags)
     if (parent == NULL)
         return NULL;
 
-    parent->type = NODE_FUNC_DECL;
-    parent->func_name = name;
-    parent->func_args = arg_head;
-    parent->func_body = body;
+    parent->type = NODE_PROCEDURE_DECL;
+    parent->proc_name = name;
+    parent->proc_args = arg_head;
+    parent->proc_body = body;
 
     return parent;
 }
 
-Node *parse_var_decl(Parser *p, int opflags)
+static Node *parse_var_decl(Parser *p, int opflags)
 {
     Token t = next_token(p);
     if (t.type != TOKEN_KWORD_LET) {
@@ -1933,29 +1784,7 @@ Node *parse_var_decl(Parser *p, int opflags)
     return parent;
 }
 
-Node *parse_print_stmt(Parser *p, int opflags)
-{
-    Token t = next_token(p);
-    if (t.type != TOKEN_KWORD_PRINT) {
-        parser_report(p, "Missing keyword 'print' at the start of a print statement");
-        return NULL;
-    }
-
-    Node *arg = parse_expr(p, opflags);
-    if (arg == NULL)
-        return NULL;
-
-    Node *parent = alloc_node(p);
-    if (parent == NULL)
-        return NULL;
-
-    parent->type = NODE_PRINT;
-    parent->left = arg;
-
-    return parent;
-}
-
-Node *parse_include_stmt(Parser *p)
+static Node *parse_include_stmt(Parser *p)
 {
     Token t = next_token(p);
     if (t.type != TOKEN_KWORD_INCLUDE) {
@@ -1984,7 +1813,7 @@ Node *parse_include_stmt(Parser *p)
     return parent;
 }
 
-Node *parse_stmt(Parser *p, int opflags)
+static Node *parse_stmt(Parser *p, int opflags)
 {
     Scanner saved = p->s;
     Token t = next_token(p);
@@ -1995,11 +1824,8 @@ Node *parse_stmt(Parser *p, int opflags)
         case TOKEN_KWORD_INCLUDE:
         return parse_include_stmt(p);
 
-        case TOKEN_KWORD_PRINT:
-        return parse_print_stmt(p, opflags);
-
-        case TOKEN_KWORD_FUN:
-        return parse_func_decl(p, opflags);
+        case TOKEN_KWORD_PROCEDURE:
+        return parse_proc_decl(p, opflags);
 
         case TOKEN_KWORD_LET:
         return parse_var_decl(p, opflags);
@@ -2014,7 +1840,7 @@ Node *parse_stmt(Parser *p, int opflags)
         return parse_for_stmt(p, opflags);
 
         case TOKEN_CURLY_OPEN:
-        return parse_block_stmt(p, true);
+        return parse_compound_stmt(p, false);
 
         default:
         break;
@@ -2023,357 +1849,313 @@ Node *parse_stmt(Parser *p, int opflags)
     return parse_expr_stmt(p, opflags);
 }
 
-void print_node(Node *node)
+static void write_node(Writer *w, Node *node)
 {
     switch (node->type) {
 
-        case NODE_VALUE_NONE:
-        printf("none");
-        break;
-
-        case NODE_VALUE_TRUE:
-        printf("true");
-        break;
-
-        case NODE_VALUE_FALSE:
-        printf("false");
-        break;
+        case NODE_VALUE_NONE : write_text(w, S("none")); break;
+        case NODE_VALUE_TRUE : write_text(w, S("true")); break;
+        case NODE_VALUE_FALSE: write_text(w, S("false")); break;
 
         case NODE_NESTED:
-        {
-            printf("(");
-            print_node(node->left);
-            printf(")");
-        }
+        write_text(w, S("(nested "));
+        write_node(w, node->left);
+        write_text(w, S(")"));
         break;
 
-        case NODE_PRINT:
+        case NODE_COMPOUND:
         {
-            printf("print ");
-            print_node(node->left);
-        }
-        break;
-
-        case NODE_BLOCK:
-        {
-            printf("{");
+            write_text(w, S("(compound "));
             Node *cur = node->left;
             while (cur) {
-                print_node(cur);
-                printf(";");
+                write_node(w, cur);
                 cur = cur->next;
+                if (cur)
+                    write_text(w, S(" "));
             }
-            printf("}");
+            write_text(w, S(")"));
+        }
+        break;
+
+        case NODE_GLOBAL:
+        {
+            write_text(w, S("(global "));
+            Node *cur = node->left;
+            while (cur) {
+                write_node(w, cur);
+                cur = cur->next;
+                if (cur)
+                    write_text(w, S(" "));
+            }
+            write_text(w, S(")"));
         }
         break;
 
         case NODE_OPER_LEN:
-        printf("len(");
-        print_node(node->left);
-        printf(")");
+        write_text(w, S("(len "));
+        write_node(w, node->left);
+        write_text(w, S(")"));
         break;
 
         case NODE_OPER_POS:
-        printf("(");
-        printf("+");
-        print_node(node->left);
-        printf(")");
+        write_text(w, S("(+"));
+        write_node(w, node->left);
+        write_text(w, S(")"));
         break;
 
         case NODE_OPER_NEG:
-        printf("(");
-        printf("-");
-        print_node(node->left);
-        printf(")");
+        write_text(w, S("("));
+        write_text(w, S("-"));
+        write_node(w, node->left);
+        write_text(w, S(")"));
         break;
 
         case NODE_OPER_ASS:
-        printf("(");
-        print_node(node->left);
-        printf("=");
-        print_node(node->right);
-        printf(")");
+        write_text(w, S("("));
+        write_node(w, node->left);
+        write_text(w, S("="));
+        write_node(w, node->right);
+        write_text(w, S(")"));
         break;
 
         case NODE_OPER_EQL:
-        printf("(");
-        print_node(node->left);
-        printf("==");
-        print_node(node->right);
-        printf(")");
+        write_text(w, S("("));
+        write_node(w, node->left);
+        write_text(w, S("=="));
+        write_node(w, node->right);
+        write_text(w, S(")"));
         break;
 
         case NODE_OPER_NQL:
-        printf("(");
-        print_node(node->left);
-        printf("!=");
-        print_node(node->right);
-        printf(")");
+        write_text(w, S("("));
+        write_node(w, node->left);
+        write_text(w, S("!="));
+        write_node(w, node->right);
+        write_text(w, S(")"));
         break;
 
         case NODE_OPER_LSS:
-        printf("(");
-        print_node(node->left);
-        printf("<");
-        print_node(node->right);
-        printf(")");
+        write_text(w, S("("));
+        write_node(w, node->left);
+        write_text(w, S("<"));
+        write_node(w, node->right);
+        write_text(w, S(")"));
         break;
 
         case NODE_OPER_GRT:
-        printf("(");
-        print_node(node->left);
-        printf(">");
-        print_node(node->right);
-        printf(")");
+        write_text(w, S("("));
+        write_node(w, node->left);
+        write_text(w, S(">"));
+        write_node(w, node->right);
+        write_text(w, S(")"));
         break;
 
         case NODE_OPER_ADD:
-        printf("(");
-        print_node(node->left);
-        printf("+");
-        print_node(node->right);
-        printf(")");
+        write_text(w, S("("));
+        write_node(w, node->left);
+        write_text(w, S("+"));
+        write_node(w, node->right);
+        write_text(w, S(")"));
         break;
 
         case NODE_OPER_SUB:
-        printf("(");
-        print_node(node->left);
-        printf("-");
-        print_node(node->right);
-        printf(")");
+        write_text(w, S("("));
+        write_node(w, node->left);
+        write_text(w, S("-"));
+        write_node(w, node->right);
+        write_text(w, S(")"));
         break;
 
         case NODE_OPER_MUL:
-        printf("(");
-        print_node(node->left);
-        printf("*");
-        print_node(node->right);
-        printf(")");
+        write_text(w, S("("));
+        write_node(w, node->left);
+        write_text(w, S("*"));
+        write_node(w, node->right);
+        write_text(w, S(")"));
         break;
 
         case NODE_OPER_DIV:
-        printf("(");
-        print_node(node->left);
-        printf("/");
-        print_node(node->right);
-        printf(")");
+        write_text(w, S("("));
+        write_node(w, node->left);
+        write_text(w, S("/"));
+        write_node(w, node->right);
+        write_text(w, S(")"));
         break;
 
         case NODE_OPER_MOD:
-        printf("(");
-        print_node(node->left);
-        printf("%%");
-        print_node(node->right);
-        printf(")");
+        write_text(w, S("("));
+        write_node(w, node->left);
+        write_text(w, S("%%"));
+        write_node(w, node->right);
+        write_text(w, S(")"));
         break;
 
         case NODE_VALUE_INT:
-        printf("%" LLU, node->ival);
+        write_text_s64(w, node->ival);
         break;
 
         case NODE_VALUE_FLOAT:
-        printf("%f", node->dval);
+        write_text_f64(w, node->fval);
         break;
 
         case NODE_VALUE_STR:
-        printf("\"%.*s\"", node->sval.len, node->sval.ptr);
+        write_text(w, S("\""));
+        write_text(w, node->sval);
+        write_text(w, S("\""));
         break;
 
         case NODE_VALUE_VAR:
-        printf("%.*s", node->sval.len, node->sval.ptr);
+        write_text(w, node->sval);
         break;
 
         case NODE_VALUE_SYSVAR:
-        printf("$%.*s", node->sval.len, node->sval.ptr);
+        write_text(w, S("$"));
+        write_text(w, node->sval);
         break;
 
         case NODE_IFELSE:
-        printf("if ");
-        print_node(node->cond);
-        printf(":");
-        print_node(node->left);
-        if (node->right) {
-            printf(" else ");
-            print_node(node->right);
+        write_text(w, S("(if "));
+        write_node(w, node->if_cond);
+        write_text(w, S(" "));
+        write_node(w, node->if_branch1);
+        if (node->if_branch2) {
+            write_text(w, S(" else "));
+            write_node(w, node->if_branch2);
         }
+        write_text(w, S(")"));
         break;
 
         case NODE_WHILE:
-        printf("while ");
-        print_node(node->cond);
-        printf(":");
-        print_node(node->left);
+        write_text(w, S("(while "));
+        write_node(w, node->while_cond);
+        write_text(w, S(" "));
+        write_node(w, node->while_body);
+        write_text(w, S(")"));
         break;
 
         case NODE_VALUE_HTML:
         {
-            printf("<%.*s",
-                node->tagname.len,
-                node->tagname.ptr
-            );
+            write_text(w, S("(html "));
+            write_text(w, node->html_tag);
 
-            Node *param = node->params;
-            while (param) {
-                if (param->attr_value) {
-                    printf(" %.*s=",
-                        param->attr_name.len,
-                        param->attr_name.ptr);
-                    print_node(param->attr_value);
-                } else {
-                    printf(" %.*s",
-                        param->attr_name.len,
-                        param->attr_name.ptr
-                    );
-                }
-                param = param->next;
-            }
-            printf(">");
-
-            Node *child = node->child;
+            Node *child = node->html_child;
             while (child) {
-                print_node(child);
+                write_text(w, S(" "));
+                write_node(w, child);
                 child = child->next;
             }
 
-            printf("</%.*s>",
-                node->tagname.len,
-                node->tagname.ptr
-            );
+            write_text(w, S(")"));
         }
         break;
 
         case NODE_FOR:
-        {
-            printf("for %.*s",
-                node->for_var1.len,
-                node->for_var1.ptr
-            );
-            if (node->for_var2.len > 0) {
-                printf(", %.*s",
-                    node->for_var2.len,
-                    node->for_var2.ptr
-                );
-            }
-            printf(" in ");
-            print_node(node->for_set);
-            printf(": ");
-            print_node(node->left);
+        write_text(w, S("(for "));
+        write_text(w, node->for_var1);
+        if (node->for_var2.len > 0) {
+            write_text(w, S(", "));
+            write_text(w, node->for_var2);
         }
+        write_text(w, S(" in "));
+        write_node(w, node->for_set);
+        write_text(w, S(": "));
+        write_node(w, node->left);
         break;
 
         case NODE_SELECT:
-        {
-            print_node(node->left);
-            printf("[");
-            print_node(node->right);
-            printf("]");
-        }
+        write_node(w, node->left);
+        write_text(w, S("["));
+        write_node(w, node->right);
+        write_text(w, S("]"));
         break;
 
         case NODE_VALUE_ARRAY:
         {
-            printf("[");
+            write_text(w, S("["));
             Node *child = node->child;
             while (child) {
-                print_node(child);
-                printf(", ");
+                write_node(w, child);
+                write_text(w, S(", "));
                 child = child->next;
             }
-            printf("]");
+            write_text(w, S("]"));
         }
         break;
 
         case NODE_VALUE_MAP:
         {
-            printf("{");
+            write_text(w, S("{"));
             Node *child = node->child;
             while (child) {
-                print_node(child->key);
-                printf(": ");
-                print_node(child);
-                printf(", ");
+                write_node(w, child->key);
+                write_text(w, S(": "));
+                write_node(w, child);
+                write_text(w, S(", "));
                 child = child->next;
             }
-            printf("}");
+            write_text(w, S("}"));
         }
         break;
 
-        case NODE_HTML_PARAM:
+        case NODE_PROCEDURE_DECL:
         {
-            printf("???");
-        }
-        break;
-
-        case NODE_FUNC_DECL:
-        {
-            printf("fun %.*s(",
-                node->func_name.len,
-                node->func_name.ptr);
-            Node *arg = node->func_args;
+            write_text(w, S("(proc "));
+            write_text(w, node->proc_name);
+            write_text(w, S("("));
+            Node *arg = node->proc_args;
             while (arg) {
-                print_node(arg);
+                write_node(w, arg);
                 arg = arg->next;
                 if (arg)
-                    printf(", ");
+                    write_text(w, S(", "));
             }
-            printf(")");
-            print_node(node->func_body);
+            write_text(w, S(")"));
+            write_node(w, node->proc_body);
         }
         break;
 
-        case NODE_FUNC_ARG:
-        {
-            printf("%.*s", node->sval.len, node->sval.ptr);
-        }
+        case NODE_PROCEDURE_ARG:
+        write_text(w, node->sval);
         break;
 
-        case NODE_FUNC_CALL:
+        case NODE_PROCEDURE_CALL:
         {
-            print_node(node->left);
-            printf("(");
+            write_node(w, node->left);
+            write_text(w, S("("));
             Node *arg = node->right;
             while (arg) {
-                print_node(arg);
+                write_node(w, arg);
                 arg = arg->next;
                 if (arg)
-                    printf(", ");
+                    write_text(w, S(", "));
             }
-            printf(")");
+            write_text(w, S(")"));
         }
         break;
 
         case NODE_VAR_DECL:
-        {
-            printf("let %.*s",
-                node->var_name.len,
-                node->var_name.ptr);
-            if (node->var_value) {
-                printf(" = ");
-                print_node(node->var_value);
-            }
-            //printf(";");
+        write_text(w, S("(let "));
+        write_text(w, node->var_name);
+        if (node->var_value) {
+            write_text(w, S(" = "));
+            write_node(w, node->var_value);
         }
+        write_text(w, S(")"));
         break;
 
         case NODE_INCLUDE:
-        {
-            printf("include \"%.*s\"",
-                node->include_path.len,
-                node->include_path.ptr);
-        }
-        break;
-
-        default:
-        printf("(invalid node type %x)", node->type);
+        write_text(w, S("include \""));
+        write_text(w, node->include_path);
+        write_text(w, S("\""));
         break;
     }
 }
 
-ParseResult parse(String src, WL_Arena *a, char *errbuf, int errmax)
+static ParseResult parse(String src, WL_Arena *arena, char *errbuf, int errmax)
 {
     Parser p = {
         .s={ src.ptr, src.len, 0 },
-        .a=a,
+        .arena=arena,
         .errbuf=errbuf,
         .errmax=errmax,
         .errlen=0,
@@ -2381,291 +2163,203 @@ ParseResult parse(String src, WL_Arena *a, char *errbuf, int errmax)
 
     p.include_tail = &p.include_head;
 
-    Node *node = parse_block_stmt(&p, false);
+    Node *node = parse_compound_stmt(&p, true);
     if (node == NULL)
         return (ParseResult) { .node=NULL, .includes=NULL, .errlen=p.errlen };
-
-    assert(node->type == NODE_BLOCK);
-    node->type = NODE_GLOBAL_BLOCK;
 
     *p.include_tail = NULL;
     return (ParseResult) { .node=node, .includes=p.include_head, .errlen=-1 };
 }
 
-////////////////////////////////////////////////////////////////////////////////////////
-// src/assemble.h
-////////////////////////////////////////////////////////////////////////////////////////
-
-#ifndef WL_ASSEMBLE_INCLUDED
-#define WL_ASSEMBLE_INCLUDED
-
-#ifndef WL_AMALGAMATION
-#include "public.h"
-#include "parse.h"
-#endif
+/////////////////////////////////////////////////////////////////////////
+// CODEGEN
+/////////////////////////////////////////////////////////////////////////
 
 enum {
-    OPCODE_NOPE    = 0x00,
-    OPCODE_EXIT    = 0x23,
-    OPCODE_GROUP   = 0x25,
-    OPCODE_GPOP    = 0x26,
-    OPCODE_GPRINT  = 0x27,
-    OPCODE_GTRUNC  = 0x28,
-    OPCODE_GCOALESCE = 0x29,
-    OPCODE_GOVERWRITE = 0x2A,
-    OPCODE_GPACK   = 0x2B,
-    OPCODE_PUSHI   = 0x01,
-    OPCODE_PUSHF   = 0x02,
-    OPCODE_PUSHS   = 0x03,
-    OPCODE_PUSHV   = 0x04,
-    OPCODE_PUSHA   = 0x05,
-    OPCODE_PUSHM   = 0x06,
-    OPCODE_PUSHN   = 0x21,
-    OPCODE_POP     = 0x07,
-    OPCODE_NEG     = 0x08,
-    OPCODE_EQL     = 0x09,
-    OPCODE_NQL     = 0x0A,
-    OPCODE_LSS     = 0x0B,
-    OPCODE_GRT     = 0x0C,
-    OPCODE_ADD     = 0x0D,
-    OPCODE_SUB     = 0x0E,
-    OPCODE_MUL     = 0x0F,
-    OPCODE_DIV     = 0x10,
-    OPCODE_MOD     = 0x11,
-    OPCODE_SETV    = 0x12,
-    OPCODE_JUMP    = 0x13,
-    OPCODE_JIFP    = 0x14,
-    OPCODE_CALL    = 0x15,
-    OPCODE_RET     = 0x16,
-    OPCODE_APPEND  = 0x17,
-    OPCODE_INSERT1 = 0x18,
-    OPCODE_INSERT2 = 0x19,
-    OPCODE_SELECT  = 0x20,
-    OPCODE_PRINT   = 0x24,
-    OPCODE_SYSVAR  = 0x2C,
-    OPCODE_SYSCALL = 0x2D,
-    OPCODE_FOR     = 0x2E,
-    OPCODE_PUSHT   = 0x2F,
-    OPCODE_PUSHFL  = 0x30,
-    OPCODE_LEN     = 0x31,
+    OPCODE_NOPE,
+    OPCODE_JUMP,
+    OPCODE_JIFP,
+    OPCODE_OUTPUT,
+    OPCODE_SYSVAR,
+    OPCODE_SYSCALL,
+    OPCODE_CALL,
+    OPCODE_RET,
+    OPCODE_GROUP,
+    OPCODE_PACK,
+    OPCODE_GPOP,
+    OPCODE_FOR,
+    OPCODE_EXIT,
+    OPCODE_VARS,
+    OPCODE_POP,
+    OPCODE_SETV,
+    OPCODE_PUSHV,
+    OPCODE_PUSHI,
+    OPCODE_PUSHF,
+    OPCODE_PUSHS,
+    OPCODE_PUSHA,
+    OPCODE_PUSHM,
+    OPCODE_PUSHN,
+    OPCODE_PUSHT,
+    OPCODE_PUSHFL,
+    OPCODE_LEN,
+    OPCODE_NEG,
+    OPCODE_EQL,
+    OPCODE_NQL,
+    OPCODE_LSS,
+    OPCODE_GRT,
+    OPCODE_ADD,
+    OPCODE_SUB,
+    OPCODE_MUL,
+    OPCODE_DIV,
+    OPCODE_MOD,
+    OPCODE_APPEND,
+    OPCODE_INSERT1,
+    OPCODE_INSERT2,
+    OPCODE_SELECT,
 };
 
-typedef struct {
-    WL_Program program;
-    int errlen;
-} AssembleResult;
-
-int parse_program_header(WL_Program p, String *code, String *data, char *errbuf, int errmax);
-void  print_program(WL_Program program);
-char *print_instruction(char *p, char *data);
-AssembleResult assemble(Node *root, WL_Arena *arena, char *errbuf, int errmax);
-
-#endif // WL_ASSEMBLE_INCLUDED
-
-////////////////////////////////////////////////////////////////////////////////////////
-// src/assemble.c
-////////////////////////////////////////////////////////////////////////////////////////
-
-
-#ifndef WL_AMALGAMATION
-#include "includes.h"
-#include "parse.h"
-#include "assemble.h"
-#endif
-
-#define MAX_SCOPES  32
-#define MAX_SYMBOLS 1024
-#define MAX_DEPTH 128
-
-typedef struct FunctionCall FunctionCall;
-struct FunctionCall {
-    FunctionCall *next;
-    String        name;
-    int           off;
+typedef struct UnpatchedCall UnpatchedCall;
+struct UnpatchedCall {
+    UnpatchedCall *next;
+    String         name;
+    int            off;
 };
 
 typedef enum {
-    SYMBOL_VAR,
-    SYMBOL_FUNC,
+    SYMBOL_VARIABLE,
+    SYMBOL_PROCEDURE,
 } SymbolType;
 
 typedef struct {
     SymbolType type;
     String     name;
+    bool       cnst;
     int        off;
 } Symbol;
 
 typedef enum {
-    SCOPE_GLOBAL,
-    SCOPE_FUNC,
-    SCOPE_FOR,
-    SCOPE_WHILE,
     SCOPE_IF,
     SCOPE_ELSE,
-    SCOPE_BLOCK,
-    SCOPE_HTML,
+    SCOPE_FOR,
+    SCOPE_WHILE,
+    SCOPE_PROC,
+    SCOPE_COMPOUND,
+    SCOPE_GLOBAL,
+    SCOPE_ASSIGNMENT,
 } ScopeType;
 
 typedef struct {
-    ScopeType     type;
-    int           sym_base;
-    int           max_vars;
-    FunctionCall* calls;
+    ScopeType type;
+    int idx_syms;
+    int max_vars;
+    UnpatchedCall *calls;
 } Scope;
 
-typedef struct {
-    char *ptr;
-    int   len;
-    int   cap;
-    bool   err;
-} OutputBuffer;
+#define MAX_SYMBOLS 1024
+#define MAX_SCOPES 128
+#define MAX_UNPATCHED_CALLS 32
 
 typedef struct {
 
-    WL_Arena *a;
-
-    OutputBuffer out;
-
-    int num_syms;
-    Symbol syms[MAX_SYMBOLS];
+    Writer code;
+    Writer data;
 
     int num_scopes;
     Scope scopes[MAX_SCOPES];
 
-    int strings_len;
-    int strings_cap;
-    char *strings;
+    int num_syms;
+    Symbol syms[MAX_SYMBOLS];
 
-    char *errbuf;
-    int   errmax;
-    int   errlen;
+    UnpatchedCall *free_list_calls;
+    UnpatchedCall calls[MAX_UNPATCHED_CALLS];
 
-} Assembler;
+    bool  err;
+    char *errmsg;
+    int   errcap;
 
-void assembler_report(Assembler *a, char *fmt, ...)
+    int data_off;
+
+} Codegen;
+
+static void cg_report(Codegen *cg, char *fmt, ...)
 {
-    if (a->errmax == 0 || a->errlen > 0)
-        return;
-
-    int len = snprintf(a->errbuf, a->errmax, "Error: ");
-    if (len < 0) {
-        // TODO
-    }
+    if (cg->err) return;
 
     va_list args;
     va_start(args, fmt);
-    int ret = vsnprintf(a->errbuf + len, a->errmax - len, fmt, args);
+    int len = vsnprintf(cg->errmsg, cg->errcap, fmt, args);
     va_end(args);
-    if (ret < 0) {
-        // TODO
-    }
-    len += ret;
 
-    a->errlen = len;
+    if (len > cg->errcap)
+        len = cg->errcap-1;
+
+    cg->errmsg[len] = '\0';
+    cg->err = true;
 }
 
-int add_string_literal(Assembler *a, String str)
+static int cg_write_u8(Codegen *cg, uint8_t x)
 {
-    if (a->strings_cap - a->strings_len < str.len) {
-        int c = MAX(2 * a->strings_cap, a->strings_len + str.len);
-        char *p = malloc(c);
-        if (p == NULL) {
-            assembler_report(a, "Out of memory");
-            return -1;
-        }
-        if (a->strings_cap) {
-            memcpy(p, a->strings, a->strings_len);
-            free(a->strings);
-        }
+    if (cg->err) return -1;
 
-        a->strings = p;
-        a->strings_cap = c;
-    }
-
-    int off = a->strings_len;
-    memcpy(a->strings + a->strings_len, str.ptr, str.len);
-    a->strings_len += str.len;
-
+    int off = cg->code.len;
+    write_raw_u8(&cg->code, x);
     return off;
 }
 
-void append_mem(OutputBuffer *out, void *ptr, int len)
+static int cg_write_u32(Codegen *cg, uint32_t x)
 {
-    if (out->err)
-        return;
+    if (cg->err) return -1;
 
-    if (out->cap - out->len < len) {
-
-        int   new_cap = MAX(out->len + len, 2 * out->cap);
-        char *new_ptr = malloc(new_cap);
-        if (new_ptr == NULL) {
-            out->err = true;
-            return;
-        }
-
-        if (out->cap) {
-            memcpy(new_ptr, out->ptr, out->len);
-            free(out->ptr);
-        }
-
-        out->ptr = new_ptr;
-        out->cap = new_cap;
-    }
-
-    memcpy(out->ptr + out->len, ptr, len);
-    out->len += len;
-}
-
-void patch_mem(OutputBuffer *out, int off, void *ptr, int len)
-{
-    if (out->err)
-        return;
-
-    memcpy(out->ptr + off, ptr, len);
-}
-
-int append_u8(OutputBuffer *out, uint8_t x)
-{
-    int off = out->len;
-    append_mem(out, &x, (int) sizeof(x));
+    int off = cg->code.len;
+    write_raw_u32(&cg->code, x);
     return off;
 }
 
-int append_u32(OutputBuffer *out, uint32_t x)
+static int cg_write_s64(Codegen *cg, int64_t x)
 {
-    int off = out->len;
-    append_mem(out, &x, (int) sizeof(x));
+    if (cg->err) return -1;
+
+    int off = cg->code.len;
+    write_raw_s64(&cg->code, x);
     return off;
 }
 
-int append_s64(OutputBuffer *out, int64_t x)
+static int cg_write_f64(Codegen *cg, double x)
 {
-    int off = out->len;
-    append_mem(out, &x, (int) sizeof(x));
+    if (cg->err) return -1;
+
+    int off = cg->code.len;
+    write_raw_f64(&cg->code, x);
     return off;
 }
 
-int append_f64(OutputBuffer *out, double x)
+static void cg_write_str(Codegen *cg, String x)
 {
-    int off = out->len;
-    append_mem(out, &x, (int) sizeof(x));
-    return off;
+    if (cg->err) return;
+
+    int off = cg->data.len;
+    write_text(&cg->data, x);
+    write_raw_u32(&cg->code, off);
+    write_raw_u32(&cg->code, x.len);
 }
 
-void patch_with_current_offset(OutputBuffer *out, int off)
+static void cg_patch_u8(Codegen *cg, int off, uint8_t x)
 {
-    uint32_t x = out->len;
-    patch_mem(out, off, &x, (int) sizeof(x));
+    if (cg->err) return;
+
+    patch_mem(&cg->code, &x, off, SIZEOF(x));
 }
 
-void patch_u32(OutputBuffer *out, int off, uint32_t x)
+static void cg_patch_u32(Codegen *cg, int off, uint32_t x)
 {
-    patch_mem(out, off, &x, (int) sizeof(x));
+    if (cg->err) return;
+
+    patch_mem(&cg->code, &x, off, SIZEOF(x));
 }
 
-int current_offset(OutputBuffer *out)
+static uint32_t cg_current_offset(Codegen *cg)
 {
-    return out->len;
+    return cg->code.len;
 }
 
 int count_nodes(Node *head)
@@ -2679,724 +2373,258 @@ int count_nodes(Node *head)
     return n;
 }
 
-Scope *parent_scope(Assembler *a)
+static Scope *parent_scope(Codegen *cg)
 {
-    assert(a->num_scopes > 0);
+    ASSERT(cg->num_scopes > 0);
 
-    int parent = a->num_scopes-1;
-    while (a->scopes[parent].type != SCOPE_FUNC
-        && a->scopes[parent].type != SCOPE_GLOBAL)
+    int parent = cg->num_scopes-1;
+    while (cg->scopes[parent].type != SCOPE_PROC && cg->scopes[parent].type != SCOPE_GLOBAL)
         parent--;
 
-    Scope *scope = &a->scopes[parent];
-
-    assert(scope->type == SCOPE_GLOBAL
-        || scope->type == SCOPE_FUNC);
-
-    return scope;
+    return &cg->scopes[parent];
 }
 
-bool global_scope(Assembler *a)
+static bool inside_assignment(Codegen *cg)
 {
-    return parent_scope(a)->type == SCOPE_GLOBAL;
+    ASSERT(cg->num_scopes > 0);
+
+    int parent = cg->num_scopes-1;
+    while (cg->scopes[parent].type != SCOPE_PROC
+        && cg->scopes[parent].type != SCOPE_GLOBAL
+        && cg->scopes[parent].type != SCOPE_ASSIGNMENT)
+        parent--;
+
+    return cg->scopes[parent].type == SCOPE_ASSIGNMENT;
 }
 
-Symbol *find_symbol_in_local_scope(Assembler *a, String name)
-{
-    if (name.len == 0)
-        return NULL;
-
-    Scope *scope = &a->scopes[a->num_scopes-1];
-    for (int i = a->num_syms-1; i >= scope->sym_base; i--)
-        if (streq(a->syms[i].name, name))
-            return &a->syms[i];
-    return NULL;
-}
-
-Symbol *find_symbol_in_function(Assembler *a, String name)
-{
-    if (name.len == 0)
-        return NULL;
-
-    Scope *scope = parent_scope(a);
-    for (int i = a->num_syms-1; i >= scope->sym_base; i--)
-        if (streq(a->syms[i].name, name))
-            return &a->syms[i];
-    return NULL;
-}
-
-int count_local_vars(Assembler *a)
+static int count_function_vars(Codegen *cg)
 {
     int n = 0;
-    Scope *scope = parent_scope(a);
-    for (int i = scope->sym_base; i < a->num_syms; i++)
-        if (a->syms[i].type == SYMBOL_VAR)
+    Scope *scope = parent_scope(cg);
+    for (int i = scope->idx_syms; i < cg->num_syms; i++)
+        if (cg->syms[i].type == SYMBOL_VARIABLE)
             n++;
     return n;
 }
 
-int declare_variable(Assembler *a, String name)
+static Symbol *cg_find_symbol(Codegen *cg, String name, bool local)
 {
-    if (a->num_syms == MAX_SYMBOLS) {
-        assembler_report(a, "Symbol limit reached");
+    if (cg->err) return NULL;
+
+    if (name.len == 0) return NULL;
+    ASSERT(cg->num_scopes > 0);
+    Scope *scope = local ? &cg->scopes[cg->num_scopes-1] : parent_scope(cg);
+    for (int i = cg->num_syms-1; i >= scope->idx_syms; i--)
+        if (streq(cg->syms[i].name, name))
+            return &cg->syms[i];
+    return NULL;
+}
+
+static int cg_declare_variable(Codegen *cg, String name, bool cnst)
+{
+    if (cg->err) return -1;
+
+    Symbol *sym = cg_find_symbol(cg, name, true);
+    if (sym) {
+        cg_report(cg, "Variable declared twice");
         return -1;
     }
 
-    if (find_symbol_in_local_scope(a, name)) {
-        assembler_report(a, "Symbol '%.*s' already declared in this scope",
-            name.len, name.ptr);
+    if (cg->num_syms == MAX_SYMBOLS) {
+        cg_report(cg, "Symbol count limit reached");
         return -1;
     }
 
-    int off = count_local_vars(a);
-    a->syms[a->num_syms++] = (Symbol) { SYMBOL_VAR, name, off };
+    int off = count_function_vars(cg);
 
-    Scope *scope = parent_scope(a);
+    Scope *parent = parent_scope(cg);
+    parent->max_vars = MAX(parent->max_vars, off+1);
 
-    if (scope->max_vars < off + 1)
-        scope->max_vars = off + 1;
-
+    cg->syms[cg->num_syms++] = (Symbol) {
+        .type = SYMBOL_VARIABLE,
+        .name = name,
+        .cnst = cnst,
+        .off  = off,
+    };
     return off;
 }
 
-int declare_function(Assembler *a, String name, int off)
+static void cg_declare_procedure(Codegen *cg, String name, int off)
 {
-    if (a->num_syms == MAX_SYMBOLS) {
-        assembler_report(a, "Symbol limit reached");
-        return -1;
+    if (cg->err) return;
+
+    Symbol *sym = cg_find_symbol(cg, name, true);
+    if (sym) {
+        cg_report(cg, "Procedure declared twice");
+        return;
     }
 
-    if (find_symbol_in_local_scope(a, name)) {
-        assembler_report(a, "Symbol '%.*s' already declared in this scope", name.len, name.ptr);
-        return -1;
+    if (cg->num_syms == MAX_SYMBOLS) {
+        cg_report(cg, "Symbol count limit reached");
+        return;
     }
 
-    a->syms[a->num_syms++] = (Symbol) { SYMBOL_FUNC, name, off };
-    return 0;
+    cg->syms[cg->num_syms++] = (Symbol) {
+        .type = SYMBOL_PROCEDURE,
+        .name = name,
+        .cnst = true,
+        .off  = off,
+    };
 }
 
-bool is_expr(Node *node)
+static void cg_push_scope(Codegen *cg, ScopeType type)
 {
-    switch (node->type) {
+    if (cg->err) return;
 
-        default:
-        break;
-
-        case NODE_SELECT:
-        case NODE_NESTED:
-        case NODE_FUNC_CALL:
-        case NODE_OPER_LEN:
-        case NODE_OPER_POS:
-        case NODE_OPER_NEG:
-        case NODE_OPER_ASS:
-        case NODE_OPER_EQL:
-        case NODE_OPER_NQL:
-        case NODE_OPER_LSS:
-        case NODE_OPER_GRT:
-        case NODE_OPER_ADD:
-        case NODE_OPER_SUB:
-        case NODE_OPER_MUL:
-        case NODE_OPER_DIV:
-        case NODE_OPER_MOD:
-        case NODE_VALUE_INT:
-        case NODE_VALUE_FLOAT:
-        case NODE_VALUE_STR:
-        case NODE_VALUE_NONE:
-        case NODE_VALUE_TRUE:
-        case NODE_VALUE_FALSE:
-        case NODE_VALUE_VAR:
-        case NODE_VALUE_SYSVAR:
-        case NODE_VALUE_HTML:
-        case NODE_VALUE_ARRAY:
-        case NODE_VALUE_MAP:
-        return true;
+    if (cg->num_scopes == MAX_SCOPES) {
+        cg_report(cg, "Scope limit reached");
+        return;
     }
 
-    return false;
-}
-
-int push_scope(Assembler *a, ScopeType type)
-{
-    if (a->num_scopes == MAX_SCOPES) {
-        assembler_report(a, "Scope limit reached");
-        return -1;
-    }
-    Scope *scope = &a->scopes[a->num_scopes++];
+    Scope *scope = &cg->scopes[cg->num_scopes++];
     scope->type     = type;
-    scope->sym_base = a->num_syms;
+    scope->idx_syms = cg->num_syms;
     scope->max_vars = 0;
     scope->calls    = NULL;
-    return 0;
 }
 
-int pop_scope(Assembler *a)
+static void cg_pop_scope(Codegen *cg)
 {
-    Scope *scope = &a->scopes[a->num_scopes-1];
+    if (cg->err) return;
 
-    FunctionCall  *call = scope->calls;
-    FunctionCall **prev = &scope->calls;
-    while (call) {
+    ASSERT(cg->num_scopes > 0);
+    Scope *scope = &cg->scopes[cg->num_scopes-1];
 
-        Symbol *sym = find_symbol_in_local_scope(a, call->name);
+    Scope *parent_scope = NULL;
+    if (cg->num_scopes > 1)
+        parent_scope = &cg->scopes[cg->num_scopes-2];
+
+    while (scope->calls) {
+
+        UnpatchedCall *call = scope->calls;
+        scope->calls = call->next;
+
+        ASSERT(call - cg->calls >= 0 && call - cg->calls < MAX_UNPATCHED_CALLS);
+
+        Symbol *sym = cg_find_symbol(cg, call->name, true);
 
         if (sym == NULL) {
-            prev = &call->next;
-            call = call->next;
+            if (parent_scope == NULL) {
+                cg_report(cg, "Undefined function '%.*s'",
+                    scope->calls->name.len,
+                    scope->calls->name.ptr);
+                    return;
+                }
+            call->next = parent_scope->calls;
+            parent_scope->calls = call; 
             continue;
         }
 
-        if (sym->type != SYMBOL_FUNC) {
-            assembler_report(a, "Symbol '%.*s' is not a function", call->name.len, call->name.ptr);
-            return -1;
+        if (sym->type != SYMBOL_PROCEDURE) {
+            cg_report(cg, "Symbol '%.*s' is not a procedure", call->name.len, call->name.ptr);
+            return;
         }
 
-        patch_u32(&a->out, call->off, sym->off);
+        cg_patch_u32(cg, call->off, sym->off);
 
-        *prev = call->next;
-        call = call->next;
+        call->next = cg->free_list_calls;
+        cg->free_list_calls = call;
+
+        // TODO: remove
+        ASSERT(cg->scopes[cg->num_scopes-1].calls == NULL || (cg->scopes[cg->num_scopes-1].calls - cg->calls >= 0 && cg->scopes[cg->num_scopes-1].calls - cg->calls < MAX_UNPATCHED_CALLS));
     }
 
-    if (scope->calls) {
-
-        if (a->num_scopes == 1) {
-            assembler_report(a, "Undefined function '%.*s'",
-                scope->calls->name.len,
-                scope->calls->name.ptr);
-            return -1;
-        }
-
-        Scope *parent_scope = &a->scopes[a->num_scopes-2];
-        *prev = parent_scope->calls;
-        parent_scope->calls = scope->calls;
-    }
-
-    a->num_syms = scope->sym_base;
-    a->num_scopes--;
-    return 0;
+    cg->num_syms = scope->idx_syms;
+    cg->num_scopes--;
 }
 
-void assemble_statement(Assembler *a, Node *node, bool pop_expr);
-
-typedef struct {
-    OutputBuffer tmp;
-} HTMLAssembler;
-
-void write_buffered_html(Assembler *a, HTMLAssembler *ha)
+static void cg_append_unpatched_call(Codegen *cg, String name, int p)
 {
-    if (ha->tmp.len == 0)
+    if (cg->err) return;
+
+    if (cg->free_list_calls == NULL) {
+        cg_report(cg, "Out of memory");
         return;
+    }
+    UnpatchedCall *call = cg->free_list_calls;
+    cg->free_list_calls = call->next;
 
-    int off = add_string_literal(a, (String) { ha->tmp.ptr, ha->tmp.len });
-    append_u8(&a->out, OPCODE_PUSHS);
-    append_u32(&a->out, off);
-    append_u32(&a->out, ha->tmp.len);
+    ASSERT(call - cg->calls >= 0 && call - cg->calls < MAX_UNPATCHED_CALLS);
 
-    free(ha->tmp.ptr);
-    ha->tmp.ptr = NULL;
-    ha->tmp.len = 0;
-    ha->tmp.cap = 0;
+    call->name = name;
+    call->off  = p;
+    call->next = NULL;
+
+    ASSERT(cg->num_scopes > 0);
+    Scope *scope = &cg->scopes[cg->num_scopes-1];
+
+    call->next = scope->calls;
+    scope->calls = call;
 }
 
-void assemble_html_2(Assembler *a, HTMLAssembler *ha, Node *node)
+static bool cg_global_scope(Codegen *cg)
 {
-    append_u8(&ha->tmp, '<');
-    append_mem(&ha->tmp, node->tagname.ptr, node->tagname.len);
+    Scope *scope = parent_scope(cg);
+    return scope->type == SCOPE_GLOBAL;
+}
 
-    Node *attr = node->params;
-    while (attr) {
-
-        String name  = attr->attr_name;
-        Node  *value = attr->attr_value;
-
-        append_u8(&ha->tmp, ' ');
-        append_mem(&ha->tmp, name.ptr, name.len);
-
-        if (value) {
-            append_u8(&ha->tmp, '=');
-            append_u8(&ha->tmp, '"');
-
-            if (value->type == NODE_VALUE_STR) {
-                append_mem(&ha->tmp,
-                    value->sval.ptr, // TODO: escape
-                    value->sval.len
-                );
-            } else {
-                write_buffered_html(a, ha);
-                assemble_statement(a, value, false);
-            }
-
-            append_u8(&ha->tmp, '"');
+static void cg_flush_pushs(Codegen *cg)
+{
+    if (cg->data_off != -1) {
+        if (cg->data_off < cg->data.len) {
+            cg_write_u8(cg, OPCODE_PUSHS);
+            cg_write_u32(cg, cg->data_off);
+            cg_write_u32(cg, cg->data.len - cg->data_off);
         }
-        attr = attr->next;
+        cg->data_off = -1;
     }
+}
 
-    if (node->no_body) {
-        append_u8(&ha->tmp, ' ');
-        append_u8(&ha->tmp, '/');
-        append_u8(&ha->tmp, '>');
+static int cg_write_opcode(Codegen *cg, uint8_t opcode)
+{
+    ASSERT(opcode != OPCODE_PUSHS);
+    cg_flush_pushs(cg);
+    return cg_write_u8(cg, opcode);
+}
+
+static void cg_write_pushs(Codegen *cg, String str, bool dont_group)
+{
+    if (dont_group) {
+        cg_flush_pushs(cg);
+        cg_write_u8(cg, OPCODE_PUSHS);
+        cg_write_str(cg, str);
     } else {
-
-        append_u8(&ha->tmp, '>');
-
-        Node *child = node->child;
-        while (child) {
-            if (child->type == NODE_VALUE_STR)
-                append_mem(&ha->tmp, child->sval.ptr, child->sval.len);
-            else if (child->type == NODE_VALUE_HTML)
-                assemble_html_2(a, ha, child);
-            else {
-                write_buffered_html(a, ha);
-                assemble_statement(a, child, false);
-            }
-            child = child->next;
-        }
-
-        append_u8(&ha->tmp, '<');
-        append_u8(&ha->tmp, '/');
-        append_mem(&ha->tmp, node->tagname.ptr, node->tagname.len);
-        append_u8(&ha->tmp, '>');
+        if (cg->data_off == -1)
+            cg->data_off = cg->data.len;
+        write_raw_mem(&cg->data, str.ptr, str.len);
     }
 }
 
-void assemble_html(Assembler *a, Node *node)
-{
-    HTMLAssembler ha = {
-        .tmp={.ptr=NULL,.len=0,.cap=0,.err=false},
-    };
-    assemble_html_2(a, &ha, node);
-    write_buffered_html(a, &ha);
-}
+static void walk_node(Codegen *cg, Node *node);
 
-void assemble_expr(Assembler *a, Node *node, int num_results)
+static void walk_expr_node(Codegen *cg, Node *node, bool one)
 {
+    // TODO: remove
+    ASSERT(cg->scopes[cg->num_scopes-1].calls == NULL || (cg->scopes[cg->num_scopes-1].calls - cg->calls >= 0 && cg->scopes[cg->num_scopes-1].calls - cg->calls < MAX_UNPATCHED_CALLS));
+
     switch (node->type) {
 
-        default:
-        assert(0);
-        break;
-
-        case NODE_FUNC_CALL:
-        {
-            Node *func = node->left;
-            Node *args = node->right;
-
-            append_u8(&a->out, OPCODE_GROUP);
-
-            int arg_count = 0;
-            Node *arg = args;
-            while (arg) {
-                assemble_expr(a, arg, 1);
-                arg_count++;
-                arg = arg->next;
-            }
-
-            if (func->type == NODE_VALUE_SYSVAR) {
-
-                String name = func->sval;
-                int off = add_string_literal(a, name);
-
-                append_u8(&a->out, OPCODE_SYSCALL);
-                append_u32(&a->out, off);
-                append_u32(&a->out, name.len);
-
-            } else {
-
-                assert(func->type == NODE_VALUE_VAR);
-
-                append_u8(&a->out, OPCODE_CALL);
-                int p = append_u32(&a->out, 0);
-
-                FunctionCall *call = alloc(a->a, sizeof(FunctionCall), _Alignof(FunctionCall));
-                if (call == NULL) {
-                    assembler_report(a, "Out of memory");
-                    return;
-                }
-                call->name = func->sval;
-                call->off = p;
-
-                Scope *scope = &a->scopes[a->num_scopes-1];
-
-                call->next = scope->calls;
-                scope->calls = call;
-            }
-
-            if (num_results == 0)
-                append_u8(&a->out, OPCODE_GPOP);
-            else if (num_results != -1) {
-                append_u8(&a->out, OPCODE_GTRUNC);
-                append_u32(&a->out, num_results);
-            }
-
-            append_u8(&a->out, OPCODE_GCOALESCE);
-        }
+        case NODE_NESTED:
+        walk_expr_node(cg, node->left, one);
         break;
 
         case NODE_OPER_LEN:
-        assemble_expr(a, node->left, 1);
-        append_u8(&a->out, OPCODE_LEN);
-
-        if (num_results == 0)
-            append_u8(&a->out, OPCODE_POP);
-        else if (num_results != -1 && num_results != 1) {
-            append_u8(&a->out, OPCODE_GROUP);
-            append_u8(&a->out, OPCODE_GTRUNC);
-            append_u32(&a->out, num_results-1);
-            append_u8(&a->out, OPCODE_GCOALESCE);
-        }
+        walk_expr_node(cg, node->left, true);
+        cg_write_opcode(cg, OPCODE_LEN);
         break;
 
         case NODE_OPER_POS:
-        assemble_expr(a, node->left, num_results);
+        walk_expr_node(cg, node->left, one);
         break;
 
         case NODE_OPER_NEG:
-        assemble_expr(a, node->left, 1);
-        append_u8(&a->out, OPCODE_NEG);
-
-        if (num_results == 0)
-            append_u8(&a->out, OPCODE_POP);
-        else if (num_results != -1 && num_results != 1) {
-            append_u8(&a->out, OPCODE_GROUP);
-            append_u8(&a->out, OPCODE_GTRUNC);
-            append_u32(&a->out, num_results-1);
-            append_u8(&a->out, OPCODE_GCOALESCE);
-        }
-        break;
-
-        case NODE_OPER_EQL:
-        assemble_expr(a, node->left, 1);
-        assemble_expr(a, node->right, 1);
-        append_u8(&a->out, OPCODE_EQL);
-
-        if (num_results == 0)
-            append_u8(&a->out, OPCODE_POP);
-        else if (num_results != -1 && num_results != 1) {
-            append_u8(&a->out, OPCODE_GROUP);
-            append_u8(&a->out, OPCODE_GTRUNC);
-            append_u32(&a->out, num_results-1);
-            append_u8(&a->out, OPCODE_GCOALESCE);
-        }
-        break;
-
-        case NODE_OPER_NQL:
-        assemble_expr(a, node->left, 1);
-        assemble_expr(a, node->right, 1);
-        append_u8(&a->out, OPCODE_NQL);
-
-        if (num_results == 0)
-            append_u8(&a->out, OPCODE_POP);
-        else if (num_results != -1 && num_results != 1) {
-            append_u8(&a->out, OPCODE_GROUP);
-            append_u8(&a->out, OPCODE_GTRUNC);
-            append_u32(&a->out, num_results-1);
-            append_u8(&a->out, OPCODE_GCOALESCE);
-        }
-        break;
-
-        case NODE_OPER_LSS:
-        assemble_expr(a, node->left, 1);
-        assemble_expr(a, node->right, 1);
-        append_u8(&a->out, OPCODE_LSS);
-
-        if (num_results == 0)
-            append_u8(&a->out, OPCODE_POP);
-        else if (num_results != -1 && num_results != 1) {
-            append_u8(&a->out, OPCODE_GROUP);
-            append_u8(&a->out, OPCODE_GTRUNC);
-            append_u32(&a->out, num_results-1);
-            append_u8(&a->out, OPCODE_GCOALESCE);
-        }
-        break;
-
-        case NODE_OPER_GRT:
-        assemble_expr(a, node->left, 1);
-        assemble_expr(a, node->right, 1);
-        append_u8(&a->out, OPCODE_GRT);
-
-        if (num_results == 0)
-            append_u8(&a->out, OPCODE_POP);
-        else if (num_results != -1 && num_results != 1) {
-            append_u8(&a->out, OPCODE_GROUP);
-            append_u8(&a->out, OPCODE_GTRUNC);
-            append_u32(&a->out, num_results-1);
-            append_u8(&a->out, OPCODE_GCOALESCE);
-        }
-        break;
-
-        case NODE_OPER_ADD:
-        assemble_expr(a, node->left, 1);
-        assemble_expr(a, node->right, 1);
-        append_u8(&a->out, OPCODE_ADD);
-
-        if (num_results == 0)
-            append_u8(&a->out, OPCODE_POP);
-        else if (num_results != -1 && num_results != 1) {
-            append_u8(&a->out, OPCODE_GROUP);
-            append_u8(&a->out, OPCODE_GTRUNC);
-            append_u32(&a->out, num_results-1);
-            append_u8(&a->out, OPCODE_GCOALESCE);
-        }
-        break;
-
-        case NODE_OPER_SUB:
-        assemble_expr(a, node->left, 1);
-        assemble_expr(a, node->right, 1);
-        append_u8(&a->out, OPCODE_SUB);
-
-        if (num_results == 0)
-            append_u8(&a->out, OPCODE_POP);
-        else if (num_results != -1 && num_results != 1) {
-            append_u8(&a->out, OPCODE_GROUP);
-            append_u8(&a->out, OPCODE_GTRUNC);
-            append_u32(&a->out, num_results-1);
-            append_u8(&a->out, OPCODE_GCOALESCE);
-        }
-        break;
-
-        case NODE_OPER_MUL:
-        assemble_expr(a, node->left, 1);
-        assemble_expr(a, node->right, 1);
-        append_u8(&a->out, OPCODE_MUL);
-
-        if (num_results == 0)
-            append_u8(&a->out, OPCODE_POP);
-        else if (num_results != -1 && num_results != 1) {
-            append_u8(&a->out, OPCODE_GROUP);
-            append_u8(&a->out, OPCODE_GTRUNC);
-            append_u32(&a->out, num_results-1);
-            append_u8(&a->out, OPCODE_GCOALESCE);
-        }
-        break;
-
-        case NODE_OPER_DIV:
-        assemble_expr(a, node->left, 1);
-        assemble_expr(a, node->right, 1);
-        append_u8(&a->out, OPCODE_DIV);
-
-        if (num_results == 0)
-            append_u8(&a->out, OPCODE_POP);
-        else if (num_results != -1 && num_results != 1) {
-            append_u8(&a->out, OPCODE_GROUP);
-            append_u8(&a->out, OPCODE_GTRUNC);
-            append_u32(&a->out, num_results-1);
-            append_u8(&a->out, OPCODE_GCOALESCE);
-        }
-        break;
-
-        case NODE_OPER_MOD:
-        assemble_expr(a, node->left, 1);
-        assemble_expr(a, node->right, 1);
-        append_u8(&a->out, OPCODE_MOD);
-
-        if (num_results == 0)
-            append_u8(&a->out, OPCODE_POP);
-        else if (num_results != -1 && num_results != 1) {
-            append_u8(&a->out, OPCODE_GROUP);
-            append_u8(&a->out, OPCODE_GTRUNC);
-            append_u32(&a->out, num_results-1);
-            append_u8(&a->out, OPCODE_GCOALESCE);
-        }
-        break;
-
-        case NODE_VALUE_INT:
-        append_u8(&a->out, OPCODE_PUSHI);
-        append_s64(&a->out, node->ival);
-
-        if (num_results == 0)
-            append_u8(&a->out, OPCODE_POP);
-        else if (num_results != -1 && num_results != 1) {
-            append_u8(&a->out, OPCODE_GROUP);
-            append_u8(&a->out, OPCODE_GTRUNC);
-            append_u32(&a->out, num_results-1);
-            append_u8(&a->out, OPCODE_GCOALESCE);
-        }
-        break;
-
-        case NODE_VALUE_FLOAT:
-        append_u8 (&a->out, OPCODE_PUSHF);
-        append_f64(&a->out, node->dval);
-
-        if (num_results == 0)
-            append_u8(&a->out, OPCODE_POP);
-        else if (num_results != -1 && num_results != 1) {
-            append_u8(&a->out, OPCODE_GROUP);
-            append_u8(&a->out, OPCODE_GTRUNC);
-            append_u32(&a->out, num_results-1);
-            append_u8(&a->out, OPCODE_GCOALESCE);
-        }
-        break;
-
-        case NODE_VALUE_STR:
-        {
-            int off = add_string_literal(a, node->sval);
-            append_u8(&a->out, OPCODE_PUSHS);
-            append_u32(&a->out, off);
-            append_u32(&a->out, node->sval.len);
-
-            if (num_results == 0)
-                append_u8(&a->out, OPCODE_POP);
-            else if (num_results != -1 && num_results != 1) {
-                append_u8(&a->out, OPCODE_GROUP);
-                append_u8(&a->out, OPCODE_GTRUNC);
-                append_u32(&a->out, num_results-1);
-                append_u8(&a->out, OPCODE_GCOALESCE);
-            }
-        }
-        break;
-
-        case NODE_VALUE_NONE:
-        {
-            append_u8(&a->out, OPCODE_PUSHN);
-        }
-        break;
-
-        case NODE_VALUE_TRUE:
-        {
-            append_u8(&a->out, OPCODE_PUSHT);
-        }
-        break;
-
-        case NODE_VALUE_FALSE:
-        {
-            append_u8(&a->out, OPCODE_PUSHFL);
-        }
-        break;
-
-        case NODE_VALUE_VAR:
-        {
-            String name = node->sval;
-            Symbol *sym = find_symbol_in_function(a, name);
-            if (sym == NULL) {
-                assembler_report(a, "Reference to undefined variable '%.*s'", name.len, name.ptr);
-                return;
-            }
-            if (sym->type != SYMBOL_VAR) {
-                assembler_report(a, "Symbol '%.*s' is not a variable", sym->name.len, sym->name.ptr);
-                return;
-            }
-            append_u8(&a->out, OPCODE_PUSHV);
-            append_u8(&a->out, sym->off);
-
-            if (num_results == 0)
-                append_u8(&a->out, OPCODE_POP);
-            else if (num_results != -1 && num_results != 1) {
-                append_u8(&a->out, OPCODE_GROUP);
-                append_u8(&a->out, OPCODE_GTRUNC);
-                append_u32(&a->out, num_results-1);
-                append_u8(&a->out, OPCODE_GCOALESCE);
-            }
-        }
-        break;
-
-        case NODE_VALUE_SYSVAR:
-        {
-            String name = node->sval;
-            int off = add_string_literal(a, name);
-
-            append_u8(&a->out, OPCODE_SYSVAR);
-            append_u32(&a->out, off);
-            append_u32(&a->out, name.len);
-
-            if (num_results == 0)
-                append_u8(&a->out, OPCODE_POP);
-            else if (num_results != -1 && num_results != 1) {
-                append_u8(&a->out, OPCODE_GROUP);
-                append_u8(&a->out, OPCODE_GTRUNC);
-                append_u32(&a->out, num_results-1);
-                append_u8(&a->out, OPCODE_GCOALESCE);
-            }
-        }
-        break;
-
-        case NODE_VALUE_HTML:
-        {
-            if (num_results != -1)
-                append_u8(&a->out, OPCODE_GROUP);
-
-            assemble_html(a, node);
-
-            if (num_results != -1) {
-
-                append_u8(&a->out, OPCODE_GPACK);
-
-                if (num_results > 1) {
-                    append_u8(&a->out, OPCODE_GTRUNC);
-                    append_u32(&a->out, num_results-1);
-                    append_u8(&a->out, OPCODE_GCOALESCE);
-                }
-            }
-        }
-        break;
-
-        case NODE_VALUE_ARRAY:
-        {
-            append_u8(&a->out, OPCODE_PUSHA);
-            append_u32(&a->out, count_nodes(node->child));
-
-            Node *child = node->child;
-            while (child) {
-                assemble_expr(a, child, 1);
-                append_u8(&a->out, OPCODE_APPEND);
-                child = child->next;
-            }
-
-            if (num_results == 0)
-                append_u8(&a->out, OPCODE_POP);
-            else if (num_results != -1) {
-                append_u8(&a->out, OPCODE_GROUP);
-                append_u8(&a->out, OPCODE_GTRUNC);
-                append_u32(&a->out, num_results-1);
-                append_u8(&a->out, OPCODE_GCOALESCE);
-            }
-        }
-        break;
-
-        case NODE_VALUE_MAP:
-        {
-            append_u8(&a->out, OPCODE_PUSHM);
-            append_u32(&a->out, count_nodes(node->child));
-
-            Node *child = node->child;
-            while (child) {
-                assemble_expr(a, child, 1);
-                assemble_expr(a, child->key, 1);
-                append_u8(&a->out, OPCODE_INSERT1);
-                child = child->next;
-            }
-
-            if (num_results == 0)
-                append_u8(&a->out, OPCODE_POP);
-            else if (num_results != -1) {
-                append_u8(&a->out, OPCODE_GROUP);
-                append_u8(&a->out, OPCODE_GTRUNC);
-                append_u32(&a->out, num_results-1);
-                append_u8(&a->out, OPCODE_GCOALESCE);
-            }
-        }
-        break;
-
-        case NODE_SELECT:
-        {
-            Node *set = node->left;
-            Node *key = node->right;
-
-            assemble_expr(a, set, 1);
-            assemble_expr(a, key, 1);
-            append_u8(&a->out, OPCODE_SELECT);
-
-            if (num_results == 0)
-                append_u8(&a->out, OPCODE_POP);
-            else if (num_results != -1) {
-                append_u8(&a->out, OPCODE_GROUP);
-                append_u8(&a->out, OPCODE_GTRUNC);
-                append_u32(&a->out, num_results-1);
-                append_u8(&a->out, OPCODE_GCOALESCE);
-            }
-        }
-        break;
-
-        case NODE_NESTED:
-        assemble_expr(a, node->left, num_results);
+        walk_expr_node(cg, node->left, true);
+        cg_write_opcode(cg, OPCODE_NEG);
         break;
 
         case NODE_OPER_ASS:
@@ -3407,154 +2635,356 @@ void assemble_expr(Assembler *a, Node *node, int num_results)
             if (dst->type == NODE_VALUE_VAR) {
 
                 String name = dst->sval;
-
-                Symbol *sym = find_symbol_in_function(a, name);
+                Symbol *sym = cg_find_symbol(cg, name, false);
                 if (sym == NULL) {
-                    assembler_report(a, "Undeclared variable '%.*s'", name.len, name.ptr);
+                    cg_report(cg, "Write to undeclared variable");
+                    return;
+                }
+                if (sym->type == SYMBOL_PROCEDURE) {
+                    cg_report(cg, "Symbol is not a variable");
+                    return;
+                }
+                if (sym->cnst) {
+                    cg_report(cg, "Variable is constant");
                     return;
                 }
 
-                if (sym->type != SYMBOL_VAR) {
-                    assembler_report(a, "Symbol '%.*s' can't be assigned to", name.len, name.ptr);
-                    return;
-                }
+                cg_push_scope(cg, SCOPE_ASSIGNMENT);
+                walk_expr_node(cg, src, true);
+                cg_pop_scope(cg);
 
-                assemble_expr(a, src, 1);
-                append_u8(&a->out, OPCODE_SETV);
-                append_u8(&a->out, sym->off);
+                cg_write_opcode(cg, OPCODE_SETV);
+                cg_write_u8(cg, sym->off);
+
+                if (!one)
+                    cg_write_opcode(cg, OPCODE_POP);
 
             } else if (dst->type == NODE_SELECT) {
 
-                assemble_expr(a, src, 1);
-                assemble_expr(a, dst->left, 1);
-                assemble_expr(a, dst->right, 1);
-                append_u8(&a->out, OPCODE_INSERT2);
+                cg_push_scope(cg, SCOPE_ASSIGNMENT);
+                walk_expr_node(cg, src, true);
+                cg_pop_scope(cg);
+
+                walk_expr_node(cg, dst->left,  true);
+                walk_expr_node(cg, dst->right, true);
+                cg_write_opcode(cg, OPCODE_INSERT2);
+
+                if (!one)
+                    cg_write_opcode(cg, OPCODE_POP);
 
             } else {
 
-                assembler_report(a, "Assignment left side can't be assigned to");
+                cg_report(cg, "Assignment left side can't be assigned to");
+                return;
+            }
+        }
+        break;
+
+        case NODE_OPER_SHOVEL:
+        {
+            Node *dst = node->left;
+            Node *src = node->right;
+
+            walk_expr_node(cg, node->left, true);
+
+            cg_push_scope(cg, SCOPE_ASSIGNMENT);
+            walk_expr_node(cg, node->right, true);
+            cg_pop_scope(cg);
+
+            cg_write_opcode(cg, OPCODE_APPEND);
+            if (!one)
+                cg_write_opcode(cg, OPCODE_POP);
+        }
+        break;
+
+        case NODE_OPER_EQL:
+        walk_expr_node(cg, node->left, true);
+        walk_expr_node(cg, node->right, true);
+        cg_write_opcode(cg, OPCODE_EQL);
+        break;
+
+        case NODE_OPER_NQL:
+        walk_expr_node(cg, node->left, true);
+        walk_expr_node(cg, node->right, true);
+        cg_write_opcode(cg, OPCODE_NQL);
+        break;
+
+        case NODE_OPER_LSS:
+        walk_expr_node(cg, node->left, true);
+        walk_expr_node(cg, node->right, true);
+        cg_write_opcode(cg, OPCODE_LSS);
+        break;
+
+        case NODE_OPER_GRT:
+        walk_expr_node(cg, node->left, true);
+        walk_expr_node(cg, node->right, true);
+        cg_write_opcode(cg, OPCODE_GRT);
+        break;
+
+        case NODE_OPER_ADD:
+        walk_expr_node(cg, node->left, true);
+        walk_expr_node(cg, node->right, true);
+        cg_write_opcode(cg, OPCODE_ADD);
+        break;
+
+        case NODE_OPER_SUB:
+        walk_expr_node(cg, node->left, true);
+        walk_expr_node(cg, node->right, true);
+        cg_write_opcode(cg, OPCODE_SUB);
+        break;
+
+        case NODE_OPER_MUL:
+        walk_expr_node(cg, node->left, true);
+        walk_expr_node(cg, node->right, true);
+        cg_write_opcode(cg, OPCODE_MUL);
+        break;
+
+        case NODE_OPER_DIV:
+        walk_expr_node(cg, node->left, true);
+        walk_expr_node(cg, node->right, true);
+        cg_write_opcode(cg, OPCODE_DIV);
+        break;
+
+        case NODE_OPER_MOD:
+        walk_expr_node(cg, node->left, true);
+        walk_expr_node(cg, node->right, true);
+        cg_write_opcode(cg, OPCODE_MOD);
+        break;
+
+        case NODE_VALUE_INT:
+        cg_write_opcode(cg, OPCODE_PUSHI);
+        cg_write_s64(cg, node->ival);
+        break;
+
+        case NODE_VALUE_FLOAT:
+        cg_write_opcode(cg, OPCODE_PUSHF);
+        cg_write_f64(cg, node->fval);
+        break;
+
+        case NODE_VALUE_STR:
+        cg_write_pushs(cg, node->sval, one);
+        break;
+
+        case NODE_VALUE_NONE:
+        cg_write_opcode(cg, OPCODE_PUSHN);
+        break;
+
+        case NODE_VALUE_TRUE:
+        cg_write_opcode(cg, OPCODE_PUSHT);
+        break;
+
+        case NODE_VALUE_FALSE:
+        cg_write_opcode(cg, OPCODE_PUSHFL);
+        break;
+
+        case NODE_VALUE_VAR:
+        {
+            String name = node->sval;
+            Symbol *sym = cg_find_symbol(cg, name, false);
+            if (sym == NULL) {
+                cg_report(cg, "Access to undeclared variable '%.*s'", name.len, name.ptr);
+                return;
+            }
+            if (sym->type == SYMBOL_PROCEDURE) {
+                cg_report(cg, "Symbol is not a variable");
                 return;
             }
 
-            if (num_results == 0)
-                append_u8(&a->out, OPCODE_POP);
-            else if (num_results != -1 && num_results != 1) {
-                append_u8(&a->out, OPCODE_GROUP);
-                append_u8(&a->out, OPCODE_GTRUNC);
-                append_u32(&a->out, num_results-1);
-                append_u8(&a->out, OPCODE_GCOALESCE);
+            cg_write_opcode(cg, OPCODE_PUSHV);
+            cg_write_u8(cg, sym->off);
+        }
+        break;
+
+        case NODE_VALUE_SYSVAR:
+        cg_write_opcode(cg, OPCODE_SYSVAR);
+        cg_write_str(cg, node->sval);
+        break;
+
+        case NODE_VALUE_HTML:
+        {
+            if (one)
+                cg_write_opcode(cg, OPCODE_GROUP);
+
+            cg_write_pushs(cg, S("<"), false);
+            cg_write_pushs(cg, node->html_tag, false);
+
+            Node *child = node->html_attr;
+            while (child) {
+                walk_node(cg, child);
+                child = child->next;
+            }
+
+            if (!node->html_body) {
+                cg_write_pushs(cg, S("/>"), false);
+            } else {
+                cg_write_pushs(cg, S(">"), false);
+                Node *child = node->html_child;
+                while (child) {
+                    walk_node(cg, child);
+                    child = child->next;
+                }
+                cg_write_pushs(cg, S("</"), false);
+                cg_write_pushs(cg, node->html_tag, false);
+                cg_write_pushs(cg, S(">"), false);
+            }
+
+            if (one)
+                cg_write_opcode(cg, OPCODE_PACK);
+        }
+        break;
+
+        case NODE_VALUE_ARRAY:
+        {
+            cg_write_opcode(cg, OPCODE_PUSHA);
+            cg_write_u32(cg, count_nodes(node->child));
+
+            Node *child = node->child;
+            while (child) {
+                walk_expr_node(cg, child, true);
+                cg_write_opcode(cg, OPCODE_APPEND);
+                child = child->next;
             }
         }
         break;
-    }
-}
 
-void assemble_statement(Assembler *a, Node *node, bool pop_expr)
-{
-    switch (node->type) {
-
-        case NODE_INCLUDE:
+        case NODE_VALUE_MAP:
         {
-            assert(node->include_root);
-            assemble_statement(a, node->include_root, pop_expr);
+            cg_write_opcode(cg, OPCODE_PUSHM);
+            cg_write_u32(cg, count_nodes(node->child));
+
+            Node *child = node->child;
+            while (child) {
+                walk_expr_node(cg, child, true);
+                walk_expr_node(cg, child->key, true);
+                cg_write_opcode(cg, OPCODE_INSERT1);
+                child = child->next;
+            }
         }
         break;
 
-        case NODE_PRINT:
+        case NODE_SELECT:
         {
-            append_u8(&a->out, OPCODE_GROUP);
-            assemble_expr(a, node->left, -1);
-            append_u8(&a->out, OPCODE_GPRINT);
-            append_u8(&a->out, OPCODE_GPOP);
+            Node *set = node->left;
+            Node *key = node->right;
+            walk_expr_node(cg, set, true);
+            walk_expr_node(cg, key, true);
+            cg_write_opcode(cg, OPCODE_SELECT);
         }
         break;
 
-        case NODE_FUNC_DECL:
+        case NODE_PROCEDURE_CALL:
         {
-            append_u8(&a->out, OPCODE_JUMP);
-            int p1 = append_u32(&a->out, 0);
+            if (one)
+                cg_write_opcode(cg, OPCODE_GROUP);
 
-            int ret = declare_function(a, node->func_name, current_offset(&a->out));
-            if (ret < 0) return;
-
-            ret = push_scope(a, SCOPE_FUNC);
-            if (ret < 0) return;
-
-            int arg_count = count_nodes(node->func_args);
-
-            append_u8(&a->out, OPCODE_GTRUNC);
-            append_u32(&a->out, arg_count);
-
-            append_u8(&a->out, OPCODE_GTRUNC);
-            int p = append_u32(&a->out, 0);
-
-            Node *arg = node->func_args;
-            int idx = 0;
+            int count = 0;
+            Node *arg = node->right;
             while (arg) {
-
-                int off = declare_variable(a, arg->sval);
-                if (off < 0) return;
-
-                assert(off == idx);
-
-                idx++;
+                walk_expr_node(cg, arg, true);
+                count++;
                 arg = arg->next;
             }
 
-            append_u8(&a->out, OPCODE_GROUP);
+            Node *proc = node->left;
+            if (proc->type == NODE_VALUE_VAR) {
+                
+                cg_write_opcode(cg, OPCODE_CALL);
+                cg_write_u8(cg, count);
+                int p = cg_write_u32(cg, 0);
+                cg_append_unpatched_call(cg, proc->sval, p);
 
-            if (is_expr(node->func_body)) {
-                assemble_expr(a, node->func_body, -1);
             } else {
-                assemble_statement(a, node->func_body, true);
-                append_u8(&a->out, OPCODE_PUSHN);
+
+                ASSERT(proc->type == NODE_VALUE_SYSVAR);
+                cg_write_opcode(cg, OPCODE_SYSCALL);
+                cg_write_u8(cg, count);
+                cg_write_str(cg, proc->sval);
             }
 
-            append_u8(&a->out, OPCODE_GOVERWRITE);
-            append_u8(&a->out, OPCODE_RET);
+            if (one)
+                cg_write_opcode(cg, OPCODE_PACK);
+        }
+        break;
 
-            patch_u32(&a->out, p, a->scopes[a->num_scopes-1].max_vars);
+        default:
+        UNREACHABLE;
+    }
+}
 
-            ret = pop_scope(a);
-            if (ret < 0) return;
+static void walk_node(Codegen *cg, Node *node)
+{
+    // TODO: remove
+    ASSERT(cg->scopes[cg->num_scopes-1].calls == NULL || (cg->scopes[cg->num_scopes-1].calls - cg->calls >= 0 && cg->scopes[cg->num_scopes-1].calls - cg->calls < MAX_UNPATCHED_CALLS));
 
-            patch_with_current_offset(&a->out, p1);
+    switch (node->type) {
+
+        case NODE_GLOBAL:
+        for (Node *child = node->left;
+            child; child = child->next) {
+            walk_node(cg, child);
+        }
+        break;
+
+        case NODE_COMPOUND:
+        cg_push_scope(cg, SCOPE_COMPOUND);
+        for (Node *child = node->left;
+            child; child = child->next)
+            walk_node(cg, child);
+        cg_pop_scope(cg);
+        break;
+
+        case NODE_PROCEDURE_DECL:
+        {
+            cg_push_scope(cg, SCOPE_PROC);
+
+            cg_write_opcode(cg, OPCODE_JUMP);
+            int off0 = cg_write_u32(cg, 0);
+
+            #define MAX_ARGS 128
+
+            int num_args = 0;
+            Node *args[MAX_ARGS];
+
+            Node *arg = node->proc_args;
+            while (arg) {
+                if (num_args == MAX_ARGS) {
+                    cg_report(cg, "Procedure argument limit reached");
+                    return;
+                }
+                args[num_args++] = arg;
+                arg = arg->next;
+            }
+
+            for (int i = num_args-1; i >= 0; i--)
+                cg_declare_variable(cg, args[i]->sval, false);
+
+            int off1 = cg_write_opcode(cg, OPCODE_VARS);
+            int off2 = cg_write_u8(cg, 0);
+
+            walk_node(cg, node->proc_body);
+            cg_write_opcode(cg, OPCODE_RET);
+
+            cg_patch_u8 (cg, off2, count_function_vars(cg));
+            cg_patch_u32(cg, off0, cg_current_offset(cg));
+
+            cg_pop_scope(cg);
+
+            cg_declare_procedure(cg, node->proc_name, off1);
         }
         break;
 
         case NODE_VAR_DECL:
         {
-            int off = declare_variable(a, node->var_name);
-            if (off < 0) return;
-
-            if (node->var_value)
-                assemble_expr(a, node->var_value, 1);
-            else
-                append_u8(&a->out, OPCODE_PUSHN);
-
-            append_u8(&a->out, OPCODE_SETV);
-            append_u8(&a->out, off);
-        }
-        break;
-
-        case NODE_BLOCK:
-        case NODE_GLOBAL_BLOCK:
-        {
-            if (node->type == NODE_BLOCK) {
-                int ret = push_scope(a, SCOPE_BLOCK);
-                if (ret < 0) return;
-            }
-
-            Node *stmt = node->left;
-            while (stmt) {
-                assemble_statement(a, stmt, pop_expr);
-                stmt = stmt->next;
-            }
-
-            if (node->type == NODE_BLOCK) {
-                int ret = pop_scope(a);
-                if (ret < 0) return;
-            }
+            int off = cg_declare_variable(cg, node->var_name, false);
+            if (node->var_value) {
+                cg_push_scope(cg, SCOPE_ASSIGNMENT);
+                walk_expr_node(cg, node->var_value, true);
+                cg_pop_scope(cg);
+            } else
+                cg_write_opcode(cg, OPCODE_PUSHN);
+            cg_write_opcode(cg, OPCODE_SETV);
+            cg_write_u8(cg, off);
+            cg_write_opcode(cg, OPCODE_POP);
         }
         break;
 
@@ -3579,53 +3009,80 @@ void assemble_statement(Assembler *a, Node *node, bool pop_expr)
             // end:
             //   ...
 
-            if (node->right) {
+            if (node->if_branch2) {
 
-                assemble_expr(a, node->cond, 1);
+                walk_expr_node(cg, node->if_cond, true);
 
-                append_u8(&a->out, OPCODE_JIFP);
-                int p1 = append_u32(&a->out, 0);
+                cg_write_opcode(cg, OPCODE_JIFP);
+                int p1 = cg_write_u32(cg, 0);
 
-                int ret = push_scope(a, SCOPE_IF);
-                if (ret < 0) return;
+                cg_push_scope(cg, SCOPE_IF);
+                walk_node(cg, node->if_branch1);
+                cg_pop_scope(cg);
 
-                assemble_statement(a, node->left, pop_expr);
+                cg_write_opcode(cg, OPCODE_JUMP);
+                int p2 = cg_write_u32(cg, 0);
 
-                ret = pop_scope(a);
-                if (ret < 0) return;
+                cg_flush_pushs(cg);
+                cg_patch_u32(cg, p1, cg_current_offset(cg));
 
-                append_u8(&a->out, OPCODE_JUMP);
-                int p2 = append_u32(&a->out, 0);
+                cg_push_scope(cg, SCOPE_ELSE);
+                walk_node(cg, node->if_branch2);
+                cg_pop_scope(cg);
 
-                patch_with_current_offset(&a->out, p1);
-
-                ret = push_scope(a, SCOPE_ELSE);
-                if (ret < 0) return;
-
-                assemble_statement(a, node->right, pop_expr);
-
-                ret = pop_scope(a);
-                if (ret < 0) return;
-
-                patch_with_current_offset(&a->out, p2);
+                cg_flush_pushs(cg);
+                cg_patch_u32(cg, p2, cg_current_offset(cg));
 
             } else {
 
-                assemble_expr(a, node->cond, 1);
+                walk_expr_node(cg, node->if_cond, true);
 
-                append_u8(&a->out, OPCODE_JIFP);
-                int p1 = append_u32(&a->out, 0);
+                cg_write_opcode(cg, OPCODE_JIFP);
+                int p1 = cg_write_u32(cg, 0);
 
-                int ret = push_scope(a, SCOPE_IF);
-                if (ret < 0) return;
+                cg_push_scope(cg, SCOPE_IF);
+                walk_node(cg, node->if_branch1);
+                cg_pop_scope(cg);
 
-                assemble_statement(a, node->left, pop_expr);
-
-                ret = pop_scope(a);
-                if (ret < 0) return;
-
-                patch_with_current_offset(&a->out, p1);
+                cg_flush_pushs(cg);
+                cg_patch_u32(cg, p1, cg_current_offset(cg));
             }
+        }
+        break;
+
+        case NODE_FOR:
+        {
+            cg_push_scope(cg, SCOPE_FOR);
+
+            int var_1 = cg_declare_variable(cg, node->for_var1, false);
+            int var_2 = cg_declare_variable(cg, node->for_var2, true);
+            int var_3 = cg_declare_variable(cg, (String) { NULL, 0 }, true);
+
+            walk_expr_node(cg, node->for_set, true);
+            cg_write_opcode(cg, OPCODE_SETV);
+            cg_write_u8(cg, var_3);
+            cg_write_opcode(cg, OPCODE_POP);
+
+            cg_write_opcode(cg, OPCODE_PUSHI);
+            cg_write_s64(cg, -1);
+            cg_write_opcode(cg, OPCODE_SETV);
+            cg_write_u8(cg, var_2);
+            cg_write_opcode(cg, OPCODE_POP);
+
+            int start = cg_write_opcode(cg, OPCODE_FOR);
+            cg_write_u8(cg, var_3);
+            cg_write_u8(cg, var_1);
+            cg_write_u8(cg, var_2);
+            int p = cg_write_u32(cg, 0);
+
+            walk_node(cg, node->left);
+
+            cg_write_opcode(cg, OPCODE_JUMP);
+            cg_write_u32(cg, start);
+
+            cg_patch_u32(cg, p, cg_current_offset(cg));
+
+            cg_pop_scope(cg);
         }
         break;
 
@@ -3639,562 +3096,598 @@ void assemble_statement(Assembler *a, Node *node, bool pop_expr)
             // end:
             //   ...
 
-            int start = current_offset(&a->out);
+            int start = cg_current_offset(cg);
 
-            assemble_expr(a, node->cond, 1);
+            walk_expr_node(cg, node->while_cond, true);
 
-            append_u8(&a->out, OPCODE_JIFP);
-            int p = append_u32(&a->out, 0);
+            cg_write_opcode(cg, OPCODE_JIFP);
+            int p = cg_write_u32(cg, 0);
 
-            int ret = push_scope(a, SCOPE_WHILE);
-            if (ret < 0) return;
+            cg_push_scope(cg, SCOPE_WHILE);
+            walk_node(cg, node->left);
+            cg_pop_scope(cg);
 
-            assemble_statement(a, node->left, pop_expr);
+            cg_write_opcode(cg, OPCODE_JUMP);
+            cg_write_u32(cg, start);
 
-            ret = pop_scope(a);
-            if (ret < 0) return;
-
-            append_u8(&a->out, OPCODE_JUMP);
-            append_u32(&a->out, start);
-
-            patch_with_current_offset(&a->out, p);
+            cg_patch_u32(cg, p, cg_current_offset(cg));
         }
         break;
 
-        case NODE_FOR:
-        {
-            int ret = push_scope(a, SCOPE_FOR);
-            if (ret < 0) return;
-
-            int var_1 = declare_variable(a, node->for_var1);
-            int var_2 = declare_variable(a, node->for_var2);
-            int var_3 = declare_variable(a, (String) { NULL, 0 });
-
-            assemble_expr(a, node->for_set, 1);
-            append_u8(&a->out, OPCODE_SETV);
-            append_u8(&a->out, var_3);
-
-            append_u8(&a->out, OPCODE_PUSHI);
-            append_s64(&a->out, 0);
-            append_u8(&a->out, OPCODE_SETV);
-            append_u8(&a->out, var_2);
-
-            int start = append_u8(&a->out, OPCODE_FOR);
-            append_u8(&a->out, var_3);
-            append_u8(&a->out, var_1);
-            append_u8(&a->out, var_2);
-            int p = append_u32(&a->out, 0);
-
-            assemble_statement(a, node->left, pop_expr);
-
-            append_u8(&a->out, OPCODE_JUMP);
-            append_u32(&a->out, start);
-
-            patch_with_current_offset(&a->out, p);
-
-            ret = pop_scope(a);
-            if (ret < 0) return;
-        }
+        case NODE_INCLUDE:
+        walk_node(cg, node->include_root);
         break;
 
         default:
-        assemble_expr(a, node, pop_expr ? 0 : -1);
+        walk_expr_node(cg, node, false);
+        if (cg_global_scope(cg) && !inside_assignment(cg))
+            cg_write_opcode(cg, OPCODE_OUTPUT);
         break;
     }
 }
 
-typedef struct {
-    uint32_t magic;
-    uint32_t code_size;
-    uint32_t data_size;
-} Header;
+#define WL_MAGIC 0xFEEDBEEF
 
-AssembleResult assemble(Node *root, WL_Arena *arena, char *errbuf, int errmax)
+static int codegen(Node *node, char *dst, int cap, char *errmsg, int errcap)
 {
-    Assembler a = {0};
-    a.errbuf = errbuf;
-    a.errmax = errmax;
-    a.a = arena;
+    char *hdr;
+    if (cap < SIZEOF(uint32_t) * 3)
+        hdr = NULL;
+    else {
+        hdr = dst;
+        dst += SIZEOF(uint32_t) * 3;
+        cap -= SIZEOF(uint32_t) * 3;
+    }
 
-    int ret = push_scope(&a, SCOPE_GLOBAL);
-    if (ret < 0)
-        return (AssembleResult) { (WL_Program) {0}, a.errlen };
+    Codegen cg = {
+        .code = { dst,         cap/2, 0 },
+        .data = { dst + cap/2, cap/2, 0 },
+        .num_scopes = 0,
+        .err = false,
+        .errmsg = errmsg,
+        .errcap = errcap,
+        .data_off = -1,
+    };
 
-    append_u8(&a.out, OPCODE_GROUP);
+    cg.free_list_calls = cg.calls;
+    for (int i = 0; i < MAX_UNPATCHED_CALLS-1; i++)
+        cg.calls[i].next = &cg.calls[i+1];
+    cg.calls[MAX_UNPATCHED_CALLS-1].next = NULL;
 
-    append_u8(&a.out, OPCODE_GTRUNC);
-    int p = append_u32(&a.out, 0);
+    cg_push_scope(&cg, SCOPE_GLOBAL);
+    cg_write_opcode(&cg, OPCODE_VARS);
+    int off = cg_write_u8(&cg, 0);
+    walk_node(&cg, node);
+    cg_write_opcode(&cg, OPCODE_EXIT);
+    cg_patch_u8(&cg, off, cg.scopes[0].max_vars);
+    cg_pop_scope(&cg);
 
-    append_u8(&a.out, OPCODE_GROUP);
+    if (cg.err)
+        return -1;
 
-    assemble_statement(&a, root, false);
+    if (hdr) {
 
-    append_u8(&a.out, OPCODE_GPRINT);
-    append_u8(&a.out, OPCODE_GPOP);
+        uint32_t magic = WL_MAGIC;
+        uint32_t code_len = cg.code.len;
+        uint32_t data_len = cg.data.len;
+        memcpy(hdr + 0, &magic   , sizeof(uint32_t));
+        memcpy(hdr + 4, &code_len, sizeof(uint32_t));
+        memcpy(hdr + 8, &data_len, sizeof(uint32_t));
 
-    append_u8(&a.out, OPCODE_GPOP);
-    append_u8(&a.out, OPCODE_EXIT);
+        if (cg.code.len + cg.data.len <= cap)
+            memmove(dst + cg.code.len, dst + cap/2, cg.data.len);
+    }
 
-    patch_u32(&a.out, p, a.scopes[a.num_scopes-1].max_vars);
-
-    ret = pop_scope(&a);
-    if (ret < 0)
-        return (AssembleResult) { (WL_Program) {0}, a.errlen };
-
-    OutputBuffer out = {0};
-    append_u32(&out, 0xFEEDBEEF);    // magic
-    append_u32(&out, a.out.len);     // code size
-    append_u32(&out, a.strings_len); // data size
-    append_mem(&out, a.out.ptr, a.out.len);
-    append_mem(&out, a.strings, a.strings_len);
-
-    free(a.out.ptr);
-    return (AssembleResult) { (WL_Program) { out.ptr, out.len }, a.errlen };
+    return cg.code.len + cg.data.len + SIZEOF(uint32_t) * 3;
 }
 
-int parse_program_header(WL_Program p, String *code, String *data, char *errbuf, int errmax)
+static int write_instr(Writer *w, char *src, int len, String data)
 {
-    if ((uint32_t) p.len < 3 * sizeof(uint32_t)) {
-        snprintf(errbuf, errmax, "Invalid program");
+    if (len == 0)
         return -1;
+
+    switch (src[0]) {
+
+        uint8_t b0;
+        uint8_t b1;
+        uint8_t b2;
+        uint32_t w0;
+        uint32_t w1;
+        int64_t i;
+        double  d;
+
+        case OPCODE_NOPE:
+        write_text(w, S("NOPE\n"));
+        return 1;
+
+        case OPCODE_JUMP:
+        if (len < 5) return -1;
+        memcpy(&w0, src + 1, sizeof(uint32_t));
+        write_text(w, S("JUMP "));
+        write_text_s64(w, w0);
+        write_text(w, S("\n"));
+        return 5;
+
+        case OPCODE_JIFP:
+        if (len < 5) return -1;
+        memcpy(&w0, src + 1, sizeof(uint32_t));
+        write_text(w, S("JIFP "));
+        write_text_s64(w, w0);
+        write_text(w, S("\n"));
+        return 5;
+
+        case OPCODE_OUTPUT:
+        write_text(w, S("OUTPUT\n"));
+        return 1;
+
+        case OPCODE_SYSVAR:
+        if (len < 9) return -1;
+        memcpy(&w0, src + 1, sizeof(uint32_t));
+        memcpy(&w1, src + 5, sizeof(uint32_t));
+        write_text(w, S("SYSVAR \""));
+        write_text(w, (String) { data.ptr + w0, w1 });
+        write_text(w, S("\"\n"));
+        return 9;
+
+        case OPCODE_SYSCALL:
+        if (len < 10) return -1;
+        memcpy(&b0, src + 1, sizeof(uint8_t));
+        memcpy(&w0, src + 2, sizeof(uint32_t));
+        memcpy(&w1, src + 6, sizeof(uint32_t));
+        write_text(w, S("SYSCALL "));
+        write_text_s64(w, b0);
+        write_text(w, S(" \""));
+        write_text(w, (String) { data.ptr + w0, w1 });
+        write_text(w, S("\"\n"));
+        return 10;
+
+        case OPCODE_CALL:
+        if (len < 6) return -1;
+        memcpy(&b0, src + 1, sizeof(uint8_t));
+        memcpy(&w0, src + 2, sizeof(uint32_t));
+        write_text(w, S("CALL "));
+        write_text_s64(w, b0);
+        write_text(w, S(" "));
+        write_text_s64(w, w0);
+        write_text(w, S("\n"));
+        return 6;
+
+        case OPCODE_RET:
+        write_text(w, S("RET\n"));
+        return 1;
+
+        case OPCODE_GROUP:
+        write_text(w, S("GROUP\n"));
+        return 1;
+
+        case OPCODE_PACK:
+        write_text(w, S("PACK\n"));
+        return 1;
+
+        case OPCODE_GPOP:
+        write_text(w, S("GPOP\n"));
+        return 1;
+
+        case OPCODE_FOR:
+        if (len < 8) return -1;
+        memcpy(&b0, src + 1, sizeof(b0));
+        memcpy(&b1, src + 2, sizeof(b1));
+        memcpy(&b2, src + 3, sizeof(b2));
+        memcpy(&w0, src + 4, sizeof(w0));
+        write_text(w, S("FOR "));
+        write_text_s64(w, b0);
+        write_text(w, S(" "));
+        write_text_s64(w, b1);
+        write_text(w, S(" "));
+        write_text_s64(w, b2);
+        write_text(w, S(" "));
+        write_text_s64(w, w0);
+        write_text(w, S("\n"));
+        return 8;
+
+        case OPCODE_EXIT:
+        write_text(w, S("EXIT\n"));
+        return 1;
+
+        case OPCODE_VARS:
+        if (len < 2) return -1;
+        memcpy(&b0, src + 1, sizeof(b0));
+        write_text(w, S("VARS "));
+        write_text_s64(w, b0);
+        write_text(w, S("\n"));
+        return 2;
+
+        case OPCODE_POP:
+        write_text(w, S("POP\n"));
+        return 1;
+
+        case OPCODE_SETV:
+        if (len < 2) return -1;
+        memcpy(&b0, src + 1, sizeof(uint8_t));
+        write_text(w, S("SETV "));
+        write_text_s64(w, b0);
+        write_text(w, S("\n"));
+        return 2;
+
+        case OPCODE_PUSHV:
+        if (len < 2) return -1;
+        memcpy(&b0, src + 1, sizeof(uint8_t));
+        write_text(w, S("PUSHV "));
+        write_text_s64(w, b0);
+        write_text(w, S("\n"));
+        return 2;
+
+        case OPCODE_PUSHI:
+        if (len < 9) return -1;
+        memcpy(&i, src + 1, sizeof(int64_t));
+        write_text(w, S("PUSHI "));
+        write_text_s64(w, i);
+        write_text(w, S("\n"));
+        return 9;
+
+        case OPCODE_PUSHF:
+        if (len < 9) return -1;
+        memcpy(&d, src + 1, sizeof(double));
+        write_text(w, S("PUSHF "));
+        write_text_f64(w, d);
+        write_text(w, S("\n"));
+        return 9;
+
+        case OPCODE_PUSHS:
+        if (len < 9) return -1;
+        memcpy(&w0, src + 1, sizeof(uint32_t));
+        memcpy(&w1, src + 5, sizeof(uint32_t));
+        write_text(w, S("PUSHS \""));
+        write_text(w, (String) { data.ptr + w0, w1 });
+        write_text(w, S("\"\n"));
+        return 9;
+
+        case OPCODE_PUSHA:
+        if (len < 5) return -1;
+        memcpy(&w0, src + 1, sizeof(w0));
+        write_text(w, S("PUSHA "));
+        write_text_s64(w, w0);
+        write_text(w, S("\n"));
+        return 5;
+
+        case OPCODE_PUSHM:
+        if (len < 5) return -1;
+        memcpy(&w0, src + 1, sizeof(w0));
+        write_text(w, S("PUSHM "));
+        write_text_s64(w, w0);
+        write_text(w, S("\n"));
+        return 5;
+
+        case OPCODE_PUSHN:
+        write_text(w, S("PUSHN\n"));
+        return 1;
+
+        case OPCODE_PUSHT:
+        write_text(w, S("PUSHT\n"));
+        return 1;
+
+        case OPCODE_PUSHFL:
+        write_text(w, S("PUSHFL\n"));
+        return 1;
+
+        case OPCODE_LEN:
+        write_text(w, S("LEN\n"));
+        return 1;
+
+        case OPCODE_NEG:
+        write_text(w, S("NEG\n"));
+        return 1;
+
+        case OPCODE_EQL:
+        write_text(w, S("EQL\n"));
+        return 1;
+
+        case OPCODE_NQL:
+        write_text(w, S("NQL\n"));
+        return 1;
+
+        case OPCODE_LSS:
+        write_text(w, S("LSS\n"));
+        return 1;
+
+        case OPCODE_GRT:
+        write_text(w, S("GRT\n"));
+        return 1;
+
+        case OPCODE_ADD:
+        write_text(w, S("ADD\n"));
+        return 1;
+
+        case OPCODE_SUB:
+        write_text(w, S("SUB\n"));
+        return 1;
+
+        case OPCODE_MUL:
+        write_text(w, S("MUL\n"));
+        return 1;
+
+        case OPCODE_DIV:
+        write_text(w, S("DIV\n"));
+        return 1;
+
+        case OPCODE_MOD:
+        write_text(w, S("MOD\n"));
+        return 1;
+
+        case OPCODE_APPEND:
+        write_text(w, S("APPEND\n"));
+        return 1;
+
+        case OPCODE_INSERT1:
+        write_text(w, S("INSERT1\n"));
+        return 1;
+
+        case OPCODE_INSERT2:
+        write_text(w, S("INSERT2\n"));
+        return 1;
+
+        case OPCODE_SELECT:
+        write_text(w, S("SELECT\n"));
+        return 1;
+
+        default:
+        write_text(w, S("byte "));
+        write_text_s64(w, src[0]);
+        return 1;
     }
 
-    uint32_t magic;
-    uint32_t code_size;
-    uint32_t data_size;
-    memcpy(&magic,     p.ptr + 0, sizeof(uint32_t));
-    memcpy(&code_size, p.ptr + 4, sizeof(uint32_t));
-    memcpy(&data_size, p.ptr + 8, sizeof(uint32_t));
-
-    if (magic != 0xFEEDBEEF) {
-        snprintf(errbuf, errmax, "Invalid program");
-        return -1;
-    }
-
-    if (code_size + data_size + 3 * sizeof(uint32_t) != (uint32_t) p.len) {
-        snprintf(errbuf, errmax, "Invalid program");
-        return -1;
-    }
-
-    *code = (String) { p.ptr + 3 * sizeof(uint32_t),             code_size };
-    *data = (String) { p.ptr + 3 * sizeof(uint32_t) + code_size, data_size };
-    return 0;
+    return -1;
 }
 
-void print_program(WL_Program program)
+static int write_program(WL_Program program, char *dst, int cap)
 {
-    String code;
-    String data;
+    if (program.len < 3 * sizeof(uint32_t))
+        return -1;
 
-    char err[128];
-    if (parse_program_header(program, &code, &data, err, COUNT(err)) < 0) {
-        printf("%s\n", err);
+    uint32_t magic;
+    uint32_t code_len;
+    uint32_t data_len;
+
+    memcpy(&magic   , program.ptr + 0, sizeof(uint32_t));
+    memcpy(&code_len, program.ptr + 4, sizeof(uint32_t));
+    memcpy(&data_len, program.ptr + 8, sizeof(uint32_t));
+
+    if (magic != WL_MAGIC)
+        return -1;
+
+    if (code_len + data_len + 3 * sizeof(uint32_t) != program.len)
+        return -1;
+
+    String code = { program.ptr + 3 * sizeof(uint32_t)           , code_len };
+    String data = { program.ptr + 3 * sizeof(uint32_t) + code_len, data_len };
+
+    Writer w = { dst, cap, 0 };
+
+    int cur = 0;
+    while (cur < code.len) {
+        write_text_s64(&w, cur);
+        write_text(&w, S(": "));
+        int ret = write_instr(&w, code.ptr + cur, code.len - cur, data);
+        if (ret < 0) return -1;
+        cur += ret;
+    }
+
+    return w.len;
+}
+
+void wl_dump_program(WL_Program program)
+{
+    char buf[1<<10];
+    int len = write_program(program, buf, SIZEOF(buf));
+
+    if (len < 0) {
+        printf("Invalid program\n");
         return;
     }
 
-    char *p = code.ptr;
-    for (;;) {
-        printf(" %-3d: ", (int) (p - code.ptr));
-        p = print_instruction(p, data.ptr);
-        printf("\n");
-        if (p == code.ptr + code.len)
-            break;
+    if (len > SIZEOF(buf)) {
+        char *p = malloc(len+1);
+        if (p == NULL) {
+            printf("Out of memory\n");
+            return;
+        }
+        write_program(program, p, len);
+        p[len] = '\0';
+        fwrite(p, 1, len, stdout);
+    } else {
+        fwrite(buf, 1, len, stdout);
     }
 }
 
-char *print_instruction(char *p, char *data)
+/////////////////////////////////////////////////////////////////////////
+// COMPILER
+/////////////////////////////////////////////////////////////////////////
+
+#define FILE_LIMIT 128
+
+typedef struct {
+    String file;
+    Node*  root;
+    Node*  includes;
+} CompiledFile;
+
+struct WL_Compiler {
+
+    WL_Arena*    arena;
+    CompiledFile files[FILE_LIMIT];
+    int          num_files;
+    String       waiting_file;
+
+    bool err;
+    char msg[1<<8];
+};
+
+WL_Compiler *wl_compiler_init(WL_Arena *arena)
 {
-    switch (*(p++)) {
-
-        default:
-        printf("(unknown opcode 0x%x)", *p);
-        break;
-
-        case OPCODE_NOPE:
-        printf("NOPE");
-        break;
-
-        case OPCODE_EXIT:
-        printf("EXIT");
-        break;
-
-        case OPCODE_GROUP:
-        {
-            printf("GROUP");
-        }
-        break;
-
-        case OPCODE_GPOP:
-        {
-            printf("GPOP");
-        }
-        break;
-
-        case OPCODE_GPRINT:
-        {
-            printf("GPRINT");
-        }
-        break;
-
-        case OPCODE_GTRUNC:
-        {
-            uint32_t off;
-            memcpy(&off, p, sizeof(uint32_t));
-            p += sizeof(uint32_t);
-
-            printf("GTRUNC %u", off);
-        }
-        break;
-
-        case OPCODE_GCOALESCE:
-        {
-            printf("GCOALESCE");
-        }
-        break;
-
-        case OPCODE_GOVERWRITE:
-        {
-            printf("GOVERWRITE");
-        }
-        break;
-
-        case OPCODE_GPACK:
-        {
-            printf("GPACK");
-        }
-        break;
-
-        case OPCODE_PUSHI:
-        {
-            int64_t x;
-            memcpy(&x, p, sizeof(int64_t));
-            p += sizeof(int64_t);
-
-            printf("PUSHI %" LLU, x);
-        }
-        break;
-
-        case OPCODE_PUSHF:
-        {
-            double x;
-            memcpy(&x, p, sizeof(double));
-            p += sizeof(double);
-
-            printf("PUSHF %lf", x);
-        }
-        break;
-
-        case OPCODE_PUSHS:
-        {
-            uint32_t off;
-            memcpy(&off, p, sizeof(uint32_t));
-            p += sizeof(uint32_t);
-
-            uint32_t len;
-            memcpy(&len, p, sizeof(uint32_t));
-            p += sizeof(uint32_t);
-
-            printf("PUSHS \"%.*s\"", (int) len, (char*) data + off);
-        }
-        break;
-
-        case OPCODE_PUSHV:
-        {
-            uint8_t idx;
-            memcpy(&idx, p, sizeof(uint8_t));
-            p += sizeof(uint8_t);
-
-            printf("PUSHV %u", idx);
-        }
-        break;
-
-        case OPCODE_PUSHA:
-        {
-            uint32_t cap;
-            memcpy(&cap, p, sizeof(uint32_t));
-            p += sizeof(uint32_t);
-
-            printf("PUSHA %u", cap);
-        }
-        break;
-
-        case OPCODE_PUSHM:
-        {
-            uint32_t cap;
-            memcpy(&cap, p, sizeof(uint32_t));
-            p += sizeof(uint32_t);
-
-            printf("PUSHM %u", cap);
-        }
-        break;
-
-        case OPCODE_PUSHN:
-        {
-            printf("PUSHN");
-        }
-        break;
-
-        case OPCODE_POP:
-        printf("POP");
-        break;
-
-        case OPCODE_NEG:
-        printf("NEG");
-        break;
-
-        case OPCODE_EQL:
-        printf("EQL");
-        break;
-
-        case OPCODE_NQL:
-        printf("NQL");
-        break;
-
-        case OPCODE_LSS:
-        printf("LSS");
-        break;
-
-        case OPCODE_GRT:
-        printf("GRT");
-        break;
-
-        case OPCODE_ADD:
-        printf("ADD");
-        break;
-
-        case OPCODE_SUB:
-        printf("SUB");
-        break;
-
-        case OPCODE_MUL:
-        printf("MUL");
-        break;
-
-        case OPCODE_DIV:
-        printf("DIV");
-        break;
-
-        case OPCODE_MOD:
-        printf("MOD");
-        break;
-
-        case OPCODE_SETV:
-        {
-            uint8_t idx;
-            memcpy(&idx, p, sizeof(uint8_t));
-            p += sizeof(uint8_t);
-
-            printf("SETV %u", idx);
-        }
-        break;
-
-        case OPCODE_JUMP:
-        {
-            uint32_t off;
-            memcpy(&off, p, sizeof(uint32_t));
-            p += sizeof(uint32_t);
-
-            printf("JUMP %u", off);
-        }
-        break;
-
-        case OPCODE_JIFP:
-        {
-            uint32_t off;
-            memcpy(&off, p, sizeof(uint32_t));
-            p += sizeof(uint32_t);
-
-            printf("JIFP %u", off);
-        }
-        break;
-
-        case OPCODE_CALL:
-        {
-            uint32_t off;
-            memcpy(&off, p, sizeof(uint32_t));
-            p += sizeof(uint32_t);
-
-            printf("CALL %u", off);
-        }
-        break;
-
-        case OPCODE_RET:
-        printf("RET");
-        break;
-
-        case OPCODE_APPEND:
-        printf("APPEND");
-        break;
-
-        case OPCODE_INSERT1:
-        printf("INSERT1");
-        break;
-
-        case OPCODE_INSERT2:
-        printf("INSERT2");
-        break;
-
-        case OPCODE_SELECT:
-        printf("SELECT");
-        break;
-
-        case OPCODE_PRINT:
-        printf("PRINT");
-        break;
-
-        case OPCODE_SYSVAR:
-        {
-            uint32_t off;
-            memcpy(&off, p, sizeof(uint32_t));
-            p += sizeof(uint32_t);
-
-            uint32_t len;
-            memcpy(&len, p, sizeof(uint32_t));
-            p += sizeof(uint32_t);
-
-            printf("SYSVAR \"%.*s\"", (int) len, (char*) data + off);
-        }
-        break;
-
-        case OPCODE_SYSCALL:
-        {
-            uint32_t off;
-            memcpy(&off, p, sizeof(uint32_t));
-            p += sizeof(uint32_t);
-
-            uint32_t len;
-            memcpy(&len, p, sizeof(uint32_t));
-            p += sizeof(uint32_t);
-
-            printf("SYSCALL \"%.*s\"", (int) len, (char*) data + off);
-        }
-        break;
-
-        case OPCODE_PUSHT:
-        printf("PUSHT");
-        break;
-
-        case OPCODE_PUSHFL:
-        printf("PUSHFL");
-        break;
-
-        case OPCODE_FOR:
-        {
-            uint8_t a;
-            memcpy(&a, p, sizeof(uint8_t));
-            p += sizeof(uint8_t);
-
-            uint8_t b;
-            memcpy(&b, p, sizeof(uint8_t));
-            p += sizeof(uint8_t);
-
-            uint8_t c;
-            memcpy(&c, p, sizeof(uint8_t));
-            p += sizeof(uint8_t);
-
-            uint32_t d;
-            memcpy(&d, p, sizeof(uint32_t));
-            p += sizeof(uint32_t);
-
-            printf("FOR %u %u %u %u", a, b, c, d);
-        }
-        break;
-    }
-
-    return p;
+    WL_Compiler *compiler = alloc(arena, SIZEOF(WL_Compiler), _Alignof(WL_Compiler));
+    if (compiler == NULL)
+        return NULL;
+    compiler->arena = arena;
+    compiler->num_files = 0;
+    compiler->waiting_file = (String) { NULL, 0 };
+    compiler->err = false;
+    return compiler;
 }
 
-////////////////////////////////////////////////////////////////////////////////////////
-// src/value.h
-////////////////////////////////////////////////////////////////////////////////////////
+WL_AddResult wl_compiler_add(WL_Compiler *compiler, WL_String content)
+{
+    if (compiler->err)
+        return (WL_AddResult) { .type=WL_ADD_ERROR };
 
-#ifndef WL_VALUE_INCLUDED
-#define WL_VALUE_INCLUDED
+    ParseResult pres = parse((String) { content.ptr, content.len }, compiler->arena, compiler->msg, SIZEOF(compiler->msg));
+    if (pres.node == NULL) {
+        compiler->err = true;
+        return (WL_AddResult) { .type=WL_ADD_ERROR };
+    }
 
-#ifndef WL_AMALGAMATION
-#include "basic.h"
-#include "includes.h"
-#endif
+    CompiledFile compiled_file = {
+        .file = compiler->waiting_file,
+        .root = pres.node,
+        .includes = pres.includes,
+    };
+    compiler->files[compiler->num_files++] = compiled_file;
+    compiler->waiting_file = (String) { NULL, 0 };
 
-#define VALUE_NONE  ((Value) 0)
-#define VALUE_TRUE  ((Value) 1)
-#define VALUE_FALSE ((Value) 2)
-#define VALUE_ERROR ((Value) 6)
+    for (int i = 0; i < compiler->num_files; i++) {
+
+        Node *include = compiler->files[i].includes;
+        while (include) {
+
+            ASSERT(include->type == NODE_INCLUDE);
+
+            if (include->include_root == NULL) {
+                for (int j = 0; j < compiler->num_files; j++) {
+                    if (streq(include->include_path, compiler->files[j].file)) {
+                        include->include_root = compiler->files[j].root;
+                        break;
+                    }
+                }
+            }
+
+            if (include->include_root == NULL) {
+
+                if (compiler->num_files == FILE_LIMIT) {
+                    ASSERT(0); // TODO
+                }
+
+                // TODO: Make the path relative to the compiled file
+
+                compiler->waiting_file = include->include_path;
+                return (WL_AddResult) { .type=WL_ADD_AGAIN, .path={ include->include_path.ptr, include->include_path.len } };
+            }
+
+            include = include->include_next;
+        }
+    }
+
+    return (WL_AddResult) { .type=WL_ADD_LINK };
+}
+
+int wl_compiler_link(WL_Compiler *compiler, WL_Program *program)
+{
+    if (compiler->err) return -1;
+
+    if (compiler->num_files == 0 || compiler->waiting_file.len > 0) {
+        int len = snprintf(compiler->msg, SIZEOF(compiler->msg), "Missing files in compilation unit");
+        if (len > SIZEOF(compiler->msg))
+            len = SIZEOF(compiler->msg)-1;
+        compiler->msg[len] = '\0';
+        compiler->err = true;
+        return -1;
+    }
+
+    char *dst = compiler->arena->ptr + compiler->arena->cur;
+    int   cap = compiler->arena->len - compiler->arena->cur;
+
+    int len = codegen(compiler->files[0].root, dst, cap, compiler->msg, SIZEOF(compiler->msg));
+    if (len < 0) {
+        compiler->err = true;
+        return -1;
+    }
+    if (len > cap) {
+        int len = snprintf(compiler->msg, SIZEOF(compiler->msg), "Out of memory");
+        if (len > SIZEOF(compiler->msg))
+            len = SIZEOF(compiler->msg)-1;
+        compiler->msg[len] = '\0';
+        compiler->err = true;
+        return -1;
+    }
+
+    *program = (WL_Program) { dst, len };
+
+    compiler->arena->cur += len;
+    return 0;
+}
+
+WL_String wl_compiler_error(WL_Compiler *compiler)
+{
+    return compiler->err
+        ? (WL_String) { compiler->msg, strlen(compiler->msg) }
+        : (WL_String) { NULL, 0 };
+}
+
+int wl_dump_ast(WL_Compiler *compiler, char *dst, int cap)
+{
+    Writer w = { dst, cap, 0 };
+    for (int i = 0; i < compiler->num_files; i++) {
+        write_text(&w, S("(file \""));
+        write_text(&w, compiler->files[i].file);
+        write_text(&w, S("\" "));
+        write_node(&w, compiler->files[i].root);
+        write_text(&w, S(")"));
+    }
+    return w.len;
+}
+
+/////////////////////////////////////////////////////////////////////////
+// OBJECT MODEL
+/////////////////////////////////////////////////////////////////////////
 
 typedef enum {
     TYPE_NONE,
     TYPE_BOOL,
     TYPE_INT,
     TYPE_FLOAT,
-    TYPE_MAP,
-    TYPE_ARRAY,
     TYPE_STRING,
+    TYPE_ARRAY,
+    TYPE_MAP,
     TYPE_ERROR,
 } Type;
 
+#define TAG_ERROR 0
+#define TAG_POSITIVE_INT 1
+#define TAG_NEGATIVE_INT 2
+#define TAG_BOOL 3
+#define TAG_NONE 4
+#define TAG_PTR  5
+
+#define VALUE_NONE  ((0 << 3) | TAG_NONE)
+#define VALUE_TRUE  ((0 << 3) | TAG_BOOL)
+#define VALUE_FALSE ((1 << 3) | TAG_BOOL)
+#define VALUE_ERROR ((0 << 3) | TAG_ERROR)
+
 typedef uint64_t Value;
 
-Type    type_of      (Value v);
-int64_t get_int      (Value v);
-float   get_float    (Value v);
-String  get_str      (Value v);
-Value   make_int     (WL_Arena *a, int64_t x);
-Value   make_float   (WL_Arena *a, float x);
-Value   make_str     (WL_Arena *a, String x);
-Value   make_map     (WL_Arena *a);
-Value   make_array   (WL_Arena *a);
-int     map_select   (Value map, Value key, Value *val);
-Value*  map_select_by_index(Value map, int key);
-int     map_insert   (WL_Arena *a, Value map, Value key, Value val);
-Value*  array_select (Value array, int key);
-int     array_append (WL_Arena *a, Value array, Value val);
-bool    valeq        (Value a, Value b);
-bool    valgrt       (Value a, Value b);
-int     value_length (Value v);
-int     value_to_string(Value v, char *dst, int max);
-
-#endif // WL_VALUE_INCLUDED
-
-////////////////////////////////////////////////////////////////////////////////////////
-// src/value.c
-////////////////////////////////////////////////////////////////////////////////////////
-
-
-#ifndef WL_AMALGAMATION
-#include "value.h"
-#endif
-
-#define ITEMS_PER_MAP_BATCH 8
-#define ITEMS_PER_ARRAY_BATCH 16
-
-typedef struct MapItems MapItems;
-struct MapItems {
-    MapItems *next;
-    Value     keys [ITEMS_PER_MAP_BATCH];
-    Value     items[ITEMS_PER_MAP_BATCH];
+typedef struct Extension Extension;
+struct Extension {
+    Extension *next;
+    int count;
+    int capacity;
+    Value vals[];
 };
 
 typedef struct {
-    Type      type;
-    int       count;
-    int       tail_count;
-    MapItems  head;
-    MapItems *tail;
-} MapValue;
-
-typedef struct ArrayItems ArrayItems;
-struct ArrayItems {
-    ArrayItems *next;
-    Value       items[ITEMS_PER_ARRAY_BATCH];
-};
-
-typedef struct {
-    Type        type;
-    int         count;
-    int         tail_count;
-    ArrayItems  head;
-    ArrayItems *tail;
-} ArrayValue;
+    Type  type;
+    int   count;
+    int   capacity;
+    Extension *ext;
+    Value vals[];
+} AggregateValue;
 
 typedef struct {
     Type   type;
@@ -4212,249 +3705,394 @@ typedef struct {
     char data[];
 } StringValue;
 
-Type type_of(Value v)
+static int value_convert_to_str(Value v, char *dst, int cap);
+
+static Type value_type(Value v)
 {
-    // 000 none
-    // 001 true
-    // 010 false
-    // 011 int
-    // 100
-    // 101
-    // 110 error
-    // 111 pointer
-
     switch (v & 7) {
-        case 0: return TYPE_NONE;
-        case 1: return TYPE_BOOL;
-        case 2: return TYPE_BOOL;
-        case 3: return TYPE_INT;
-        case 4: break;
-        case 5: break;
-        case 6: return TYPE_ERROR;
-        case 7: return *(Type*) ((uintptr_t) v & ~(uintptr_t) 7);
+        case TAG_ERROR: return TYPE_ERROR;
+        case TAG_POSITIVE_INT: return TYPE_INT;
+        case TAG_NEGATIVE_INT: return TYPE_INT;
+        case TAG_BOOL : return TYPE_BOOL;
+        case TAG_NONE : return TYPE_NONE;
+        case TAG_PTR  : return *(Type*) (v & ~(Value) 7); break;
     }
-
-    return TYPE_ERROR;
+    return TAG_ERROR;
 }
 
-int64_t get_int(Value v)
+static int64_t value_to_s64(Value v)
 {
-    if ((v & 7) == 3)
+    ASSERT(value_type(v) == TYPE_INT);
+
+    if ((v & 7) == TAG_POSITIVE_INT)
         return (int64_t) (v >> 3);
 
-    IntValue *p = (IntValue*) v;
+    if ((v & 7) == TAG_NEGATIVE_INT)
+        return (int64_t) ((v >> 3) | ((Value) 7 << 61));
+
+    IntValue *p = (IntValue*) (v & ~(Value) 7);
     return p->raw;
 }
 
-float get_float(Value v)
+static double value_to_f64(Value v)
 {
-    FloatValue *p = (FloatValue*) v;
+    ASSERT(value_type(v) == TYPE_FLOAT);
+
+    FloatValue *p = (FloatValue*) (v & ~(Value) 7);
     return p->raw;
 }
 
-String get_str(Value v)
+static String value_to_str(Value v)
 {
-    StringValue *p = (StringValue*) (v & ~(uintptr_t) 7);
+    ASSERT(value_type(v) == TYPE_STRING);
+
+    StringValue *p = (StringValue*) (v & ~(Value) 7);
     return (String) { p->data, p->len };
 }
 
-static MapValue *get_map(Value v)
-{
-    return (MapValue*) (v & ~(uintptr_t) 7);
-}
+/*
 
-static ArrayValue *get_array(Value v)
-{
-    return (ArrayValue*) (v & ~(uintptr_t) 7);
-}
+2 bits -> 2^2 = 4
 
-Value make_int(WL_Arena *a, int64_t x)
-{
-    if (x <= (int64_t) (1ULL << 60)-1 && x >= (int64_t) -(1ULL << 60))
-        return ((Value) x << 3) | 3;
+00000   0    .
+00001   1    .
+00010   2    .
+00011   3    .
+00100   4    .
+00101   5    .
+00110   6    .
+00111   7    .
+01000   8
+01001   9
+01010   10
+01011   11
+01100   12
+01101   13
+01110   14
+01111   15
+10000  -16
+10001  -15
+10010  -14
+10011  -13
+10100  -12
+10101  -11
+10110  -10
+10111  -9
+11000  -8    .
+11001  -7    .
+11010  -6    .
+11011  -5    .
+11100  -4    .
+11101  -3    .
+11110  -2    .
+11111  -1    .
 
-    IntValue *v = alloc(a, (int) sizeof(IntValue), _Alignof(IntValue));
-    if (v == NULL)
+*/
+
+static Value value_from_s64(int64_t x, WL_Arena *arena, Error *err)
+{
+    Value v = (Value) x;
+    Value upper3bits = v >> 61;
+
+    if (upper3bits == 0)
+        return (v << 3) | TAG_POSITIVE_INT;
+
+    if (upper3bits == 7)
+        return (v << 3) | TAG_NEGATIVE_INT;
+
+    IntValue *p = alloc(arena, SIZEOF(IntValue), _Alignof(IntValue));
+    if (p == NULL) {
+        REPORT(err, "Out of memory");
         return VALUE_ERROR;
+    }
 
-    v->type = TYPE_INT;
-    v->raw  = x;
+    p->type = TYPE_INT;
+    p->raw  = x;
 
-    assert(((uintptr_t) v & 7) == 0);
-    return ((Value) v) | 7;
+    ASSERT(((Value) p & 7) == 0);
+    return ((Value) p) | TAG_PTR;
 }
 
-Value make_float(WL_Arena *a, float x)
+static Value value_from_f64(double x, WL_Arena *arena, Error *err)
 {
-    FloatValue *v = alloc(a, (int) sizeof(FloatValue), _Alignof(FloatValue));
-    if (v == NULL)
+    FloatValue *v = alloc(arena, SIZEOF(FloatValue), _Alignof(FloatValue));
+    if (v == NULL) {
+        REPORT(err, "Out of memory");
         return VALUE_ERROR;
+    }
 
     v->type = TYPE_FLOAT;
     v->raw  = x;
 
-    assert(((uintptr_t) v & 7) == 0);
-    return ((Value) v) | 7;
+    ASSERT(((uintptr_t) v & 7) == 0);
+    return ((Value) v) | TAG_PTR;
 }
 
-Value make_str(WL_Arena *a, String x) // TODO: This should reuse the string contents when possible
+static Value value_from_str(String x, WL_Arena *arena, Error *err)
 {
-    StringValue *v = alloc(a, (int) sizeof(StringValue) + x.len, 8);
-    if (v == NULL)
+    StringValue *v = alloc(arena, SIZEOF(StringValue) + x.len, 8);
+    if (v == NULL) {
+        REPORT(err, "Out of memory");
         return VALUE_ERROR;
+    }
 
     v->type = TYPE_STRING;
     v->len = x.len;
     memcpy(v->data, x.ptr, x.len);
 
-    assert(((uintptr_t) v & 7) == 0);
-    return ((Value) v) | 7;
+    ASSERT(((uintptr_t) v & 7) == 0);
+    return ((Value) v) | TAG_PTR;
 }
 
-Value make_map(WL_Arena *a)
+static Value aggregate_empty(bool map, uint32_t cap, WL_Arena *arena, Error *err)
 {
-    MapValue *m = alloc(a, (int) sizeof(MapValue), _Alignof(MapValue));
-    if (m == NULL)
+    AggregateValue *v = alloc(arena, SIZEOF(AggregateValue) + 2 * cap * SIZEOF(Value), MAX(_Alignof(AggregateValue), 8));
+    if (v == NULL) {
+        REPORT(err, "Out of memory");
         return VALUE_ERROR;
+    }
 
-    m->type = TYPE_MAP;
-    m->count = 0;
-    m->tail_count = 0;
-    m->tail = &m->head;
-    m->head.next = NULL;
-
-    return (Value) m | 7;
-}
-
-Value make_array(WL_Arena *a)
-{
-    ArrayValue *v = alloc(a, (int) sizeof(ArrayValue), _Alignof(ArrayValue));
-    if (v == NULL)
-        return VALUE_ERROR;
-
-    v->type = TYPE_ARRAY;
+    v->type = map ? TYPE_MAP : TYPE_ARRAY;
     v->count = 0;
-    v->tail_count = 0;
-    v->tail = &v->head;
-    v->head.next = NULL;
+    v->capacity = cap;
+    v->ext = NULL;
 
-    return (Value) v | 7;
+    ASSERT(((uintptr_t) v & 7) == 0);
+    return ((Value) v) | TAG_PTR;
 }
 
-int map_select(Value map, Value key, Value *val)
+static int64_t aggregate_length(AggregateValue *agg)
 {
-    MapValue *p = get_map(map);
-    MapItems *batch = &p->head;
-    while (batch) {
+    int64_t n = agg->count;
 
-        int num = ITEMS_PER_MAP_BATCH;
-        if (batch->next == NULL)
-            num = p->tail_count;
-
-        for (int i = 0; i < num; i++)
-            if (valeq(batch->keys[i], key)) {
-                *val = batch->items[i];
-                return 0;
-            }
-
-        batch = batch->next;
+    Extension *ext = agg->ext;
+    while (ext) {
+        n += ext->count;
+        ext = ext->next;
     }
 
-    return -1;
+    return n;
 }
 
-Value *map_select_by_index(Value map, int key)
+static Value *aggregate_select_by_raw_index(AggregateValue *agg, int64_t idx)
 {
-    MapValue *p = get_map(map);
-    MapItems *batch = &p->head;
-    int cursor = 0;
-    while (batch) {
+    ASSERT(agg->type == TYPE_ARRAY || agg->type == TYPE_MAP);
 
-        int num = ITEMS_PER_MAP_BATCH;
-        if (batch->next == NULL)
-            num = p->tail_count;
+    if (idx < 0 || idx >= aggregate_length(agg))
+        return NULL;
 
-        if (cursor <= key && key < cursor + num)
-            return &batch->keys[key - cursor];
+    if (idx < agg->count)
+        return &agg->vals[idx];
 
-        batch = batch->next;
-        cursor += num;
+    idx -= agg->count;
+    Extension *ext = agg->ext;
+    while (ext) {
+        if (idx < ext->count)
+            return &ext->vals[idx];
+        idx -= ext->count;
+        ext = ext->next;
     }
 
+    UNREACHABLE;
     return NULL;
 }
 
-int map_insert(WL_Arena *a, Value map, Value key, Value val)
+static bool value_eql(Value a, Value b);
+
+static Value *aggregate_select(AggregateValue *agg, Value key)
 {
-    MapValue *p = get_map(map);
-    if (p->tail_count == ITEMS_PER_MAP_BATCH) {
+    if (agg->type == TYPE_MAP) {
 
-        MapItems *batch = alloc(a, (int) sizeof(MapItems), _Alignof(MapItems));
-        if (batch == NULL)
-            return -1;
+        for (int i = 0; i < agg->count; i += 2)
+            if (value_eql(agg->vals[i], key))
+                return &agg->vals[i+1];
 
-        batch->next = NULL;
-        if (p->tail)
-            p->tail->next = batch;
-        p->tail = batch;
-        p->tail_count = 0;
+        Extension *ext = agg->ext;
+        while (ext) {
+            for (int i = 0; i < ext->count; i += 2)
+                if (value_eql(ext->vals[i], key)) {
+                    return &ext->vals[i+1];
+                }
+            ext = ext->next;
+        }
+
+        return NULL;
+    
+    } else {
+
+        ASSERT(agg->type == TYPE_ARRAY);
+
+        if (value_type(key) != TYPE_INT)
+            return NULL;
+        int64_t idx = value_to_s64(key);
+
+        return aggregate_select_by_raw_index(agg, idx);
     }
-
-    p->tail->keys[p->tail_count] = key;
-    p->tail->items[p->tail_count] = val;
-    p->tail_count++;
-    p->count++;
-    return 0;
 }
 
-Value *array_select(Value array, int key)
+static bool aggregate_append(AggregateValue *agg, Value v1, Value v2, WL_Arena *arena)
 {
-    ArrayValue *p = get_array(array);
-    ArrayItems *batch = &p->head;
-    int cursor = 0;
-    while (batch) {
-
-        int num = ITEMS_PER_ARRAY_BATCH;
-        if (batch->next == NULL)
-            num = p->tail_count;
-
-        if (cursor <= key && key < cursor + num)
-            return &batch->items[key - cursor];
-
-        batch = batch->next;
-        cursor += num;
+    if (agg->count < agg->capacity) {
+        agg->vals[agg->count++] = v1;
+        if (v2 != VALUE_ERROR)
+            agg->vals[agg->count++] = v2;
+        return true;
     }
 
-    return NULL;
+    Extension *tail = agg->ext;
+    if (tail)
+        while (tail->next)
+            tail = tail->next;
+
+    Extension *ext;
+    if (tail == NULL || tail->count == tail->capacity) {
+
+        int cap = 8;
+        ext = alloc(arena, SIZEOF(Extension) + cap * sizeof(Value), ALIGNOF(Extension));
+        if (ext == NULL)
+            return false;
+
+        ext->count = 0;
+        ext->capacity = cap;
+        ext->next = NULL;
+
+        if (tail)
+            tail->next = ext;
+        else
+            agg->ext = ext;
+
+    } else
+        ext = tail;
+
+    ext->vals[ext->count++] = v1;
+    if (v2 != VALUE_ERROR)
+        ext->vals[ext->count++] = v2;
+    return true;
 }
 
-int array_append(WL_Arena *a, Value array, Value val)
+static Value value_empty_map(uint32_t cap, WL_Arena *arena, Error *err)
 {
-    ArrayValue *p = get_array(array);
-    if (p->tail_count == ITEMS_PER_ARRAY_BATCH) {
+    return aggregate_empty(true, 2 * cap, arena, err);
+}
 
-        ArrayItems *batch = alloc(a, (int) sizeof(ArrayItems), _Alignof(ArrayItems));
-        if (batch == NULL)
-            return -1;
+static Value value_empty_array(uint32_t cap, WL_Arena *arena, Error *err)
+{
+    return aggregate_empty(false, cap, arena, err);
+}
 
-        batch->next = NULL;
+static int64_t value_length(Value set)
+{
+    ASSERT(value_type(set) == TYPE_MAP || value_type(set) == TYPE_ARRAY);
+    AggregateValue *agg = (void*) (set & ~(Value) 7);
+    int64_t len = aggregate_length(agg);
+    if (agg->type == TYPE_MAP)
+        len /= 2;
+    return len;
+}
 
-        if (p->tail)
-            p->tail->next = batch;
-        p->tail = batch;
-        p->tail_count = 0;
+static bool value_insert(Value set, Value key, Value val, WL_Arena *arena, Error *err)
+{
+    Type t = value_type(set);
+    if (t != TYPE_MAP && t != TYPE_ARRAY) {
+        REPORT(err, "Invalid insertion on non-map and non-array value");
+        return false;
+    }
+    AggregateValue *agg = (void*) (set & ~(Value) 7);
+
+    Value *dst = aggregate_select(agg, key);
+    if (dst != NULL) {
+        *dst = val;
+        return true;
     }
 
-    p->tail->items[p->tail_count] = val;
-    p->tail_count++;
-    p->count++;
-    return 0;
+    if (agg->type == TYPE_ARRAY && value_type(key) != TYPE_INT) {
+        REPORT(err, "Invalid index used in array access");
+        return false;
+    }
+
+    if (!aggregate_append(agg, key, val, arena)) {
+        REPORT(err, "Out of memory");
+        return false;
+    }
+
+    return true;
 }
 
-bool valeq(Value a, Value b)
+static Value value_select(Value set, Value key, Error *err)
 {
-    Type t1 = type_of(a);
-    Type t2 = type_of(b);
+    Type t = value_type(set);
+    if (t != TYPE_MAP && t != TYPE_ARRAY) {
+        REPORT(err, "Invalid selection from non-map and non-array value");
+        return VALUE_ERROR;
+    }
+    AggregateValue *agg = (void*) (set & ~(Value) 7);
+
+    Value *dst = aggregate_select(agg, key);
+    if (dst) return *dst;
+
+    if (agg->type == TYPE_ARRAY && value_type(key) != TYPE_INT) {
+        REPORT(err, "Invalid index used in array access");
+        return VALUE_ERROR;
+    }
+
+    char key_buf[1<<8];
+    int key_len = value_convert_to_str(key, key_buf, SIZEOF(key_buf));
+    if (key_len > SIZEOF(key_buf)-1)
+        key_len = SIZEOF(key_buf)-1;
+    key_buf[key_len] = '\0';
+
+    char set_buf[1<<8];
+    int set_len = value_convert_to_str(set, set_buf, SIZEOF(set_buf));
+    if (set_len > SIZEOF(set_buf)-1)
+        set_len = SIZEOF(set_buf)-1;
+    set_buf[set_len] = '\0';
+
+    REPORT(err, "Invalid key '%s' used in access to map '%s'", key_buf, set_buf);
+    return VALUE_ERROR;
+}
+
+static Value value_select_by_index(Value set, int64_t idx, Error *err)
+{
+    Type t = value_type(set);
+    if (t != TYPE_MAP && t != TYPE_ARRAY) {
+        REPORT(err, "Invalid selection from non-map and non-array value");
+        return VALUE_ERROR;
+    }
+    AggregateValue *agg = (void*) (set & ~(Value) 7);
+
+    if (agg->type == TYPE_MAP)
+        idx *= 2;
+
+    Value *src = aggregate_select_by_raw_index(agg, idx);
+    if (src == NULL) {
+        REPORT(err, "Invalid selection from non-map and non-array value");
+        return VALUE_ERROR;
+    }
+
+    return *src;
+}
+
+static bool value_append(Value set, Value val, WL_Arena *arena, Error *err)
+{
+    Type t = value_type(set);
+    if (t != TYPE_ARRAY) {
+        REPORT(err, "Invalid append on non-array value");
+        return false;
+    }
+    AggregateValue *agg = (void*) (set & ~(Value) 7);
+
+    if (!aggregate_append(agg, val, VALUE_ERROR, arena)) {
+        REPORT(err, "Out of memory");
+        return false;
+    }
+
+    return true;
+}
+
+static bool value_eql(Value a, Value b)
+{
+    Type t1 = value_type(a);
+    Type t2 = value_type(b);
 
     if (t1 != t2)
         return false;
@@ -4462,16 +4100,16 @@ bool valeq(Value a, Value b)
     switch (t1) {
 
         case TYPE_NONE:
-        return VALUE_TRUE;
+        return true;
 
         case TYPE_BOOL:
         return a == b;
 
         case TYPE_INT:
-        return get_int(a) == get_int(b);
+        return value_to_s64(a) == value_to_s64(b);
 
         case TYPE_FLOAT:
-        return get_float(a) == get_float(b);
+        return value_to_f64(a) == value_to_f64(b);
 
         case TYPE_MAP:
         return false; // TODO
@@ -4480,7 +4118,7 @@ bool valeq(Value a, Value b)
         return false; // TODO
 
         case TYPE_STRING:
-        return streq(get_str(a), get_str(b));
+        return streq(value_to_str(a), value_to_str(b));
 
         case TYPE_ERROR:
         return true;
@@ -4489,1712 +4127,1509 @@ bool valeq(Value a, Value b)
     return false;
 }
 
-bool valgrt(Value a, Value b)
+static bool value_nql(Value a, Value b)
 {
-    Type t1 = type_of(a);
-    Type t2 = type_of(b);
+    return !value_eql(a, b);
+}
 
-    if (t1 != t2)
-        return false;
+#define TYPE_PAIR(X, Y) (((uint16_t) (X) << 16) | (uint16_t) (Y))
 
-    switch (t1) {
-
-        case TYPE_NONE:
-        return VALUE_FALSE;
-
-        case TYPE_BOOL:
-        return VALUE_FALSE;
-
-        case TYPE_INT:
-        return get_int(a) > get_int(b);
-
-        case TYPE_FLOAT:
-        return get_float(a) > get_float(b);
-
-        case TYPE_MAP:
-        return false;
-
-        case TYPE_ARRAY:
-        return false;
-
-        case TYPE_STRING:
-        return false;
-
-        case TYPE_ERROR:
-        return false;
+bool value_greater(Value a, Value b, Error *err)
+{
+    Type t1 = value_type(a);
+    Type t2 = value_type(b);
+    switch (TYPE_PAIR(t1, t2)) {
+        case TYPE_PAIR(TYPE_INT  , TYPE_INT  ): return value_to_s64(a) > value_to_s64(b);
+        case TYPE_PAIR(TYPE_INT  , TYPE_FLOAT): return value_to_s64(a) > value_to_f64(b);
+        case TYPE_PAIR(TYPE_FLOAT, TYPE_INT  ): return value_to_f64(a) > value_to_s64(b);
+        case TYPE_PAIR(TYPE_FLOAT, TYPE_FLOAT): return value_to_f64(a) > value_to_f64(b);
+        default:break;
     }
-
+    REPORT(err, "Invalid '>' operation on non-numeric type");
     return false;
 }
 
-int value_length(Value v)
+bool value_lower(Value a, Value b, Error *err)
 {
-    Type type = type_of(v);
-
-    if (type == TYPE_ARRAY)
-        return get_array(v)->count;
-
-    if (type == TYPE_MAP)
-        return get_map(v)->count;
-
-    return -1;
-}
-
-typedef struct {
-    char *dst;
-    int   max;
-    int   len;
-} ToStringContext;
-
-static void tostr_appends(ToStringContext *tostr, String x)
-{
-    if (tostr->max > tostr->len) {
-        int cpy = tostr->max - tostr->len;
-        if (cpy > x.len)
-            cpy = x.len;
-        memcpy(tostr->dst + tostr->len, x.ptr, cpy);
+    Type t1 = value_type(a);
+    Type t2 = value_type(b);
+    switch (TYPE_PAIR(t1, t2)) {
+        case TYPE_PAIR(TYPE_INT  , TYPE_INT  ): return value_to_s64(a) < value_to_s64(b);
+        case TYPE_PAIR(TYPE_INT  , TYPE_FLOAT): return value_to_s64(a) < value_to_f64(b);
+        case TYPE_PAIR(TYPE_FLOAT, TYPE_INT  ): return value_to_f64(a) < value_to_s64(b);
+        case TYPE_PAIR(TYPE_FLOAT, TYPE_FLOAT): return value_to_f64(a) < value_to_f64(b);
+        default:break;
     }
-    tostr->len += x.len;
+    REPORT(err, "Invalid '<' operation on non-numeric type");
+    return false;
 }
 
-static void tostr_appendi(ToStringContext *tostr, int64_t x)
+static Value value_neg(Value v, WL_Arena *arena, Error *err)
 {
-    int len;
-    if (tostr->max >= tostr->len)
-        len = snprintf(tostr->dst + tostr->len, tostr->max - tostr->len, "%" LLD, x);
-    else
-        len = snprintf(NULL, 0, "%" LLD, x);
-    tostr->len += len;
+    Type t = value_type(v);
+    if (t == TYPE_INT)
+        return value_from_s64(-value_to_s64(v), arena, err); // TODO: overflow
+    
+    if (t == TYPE_FLOAT)
+        return value_from_f64(-value_to_f64(v), arena, err);
+
+    REPORT(err, "Invalid '-' operation on non-numeric type");
+    return VALUE_ERROR;
 }
 
-static void tostr_appendf(ToStringContext *tostr, double x)
+static Value value_add(Value v1, Value v2, WL_Arena *arena, Error *err)
 {
-    int len;
-    if (tostr->max >= tostr->len)
-        len = snprintf(tostr->dst + tostr->len, tostr->max - tostr->len, "%f", x);
-    else
-        len = snprintf(NULL, 0, "%f", x);
-    tostr->len += len;
+    Type t1 = value_type(v1);
+    Type t2 = value_type(v2);
+
+    Value r;
+    switch (TYPE_PAIR(t1, t2)) {
+
+        case TYPE_PAIR(TYPE_INT, TYPE_INT):
+        {
+            int64_t u = value_to_s64(v1);
+            int64_t v = value_to_s64(v2);
+            // TODO: check overflow and underflow
+            r = value_from_s64(u + v, arena, err);
+        }
+        break;
+
+        case TYPE_PAIR(TYPE_INT, TYPE_FLOAT):
+        {
+            double u = (double) value_to_s64(v1);
+            double v = value_to_f64(v2);
+            r = value_from_f64(u + v, arena, err);
+        }
+        break;
+
+        case TYPE_PAIR(TYPE_FLOAT, TYPE_INT):
+        {
+            double u = value_to_f64(v1);
+            double v = (double) value_to_s64(v2);
+            r = value_from_f64(u + v, arena, err);
+        }
+        break;
+
+        case TYPE_PAIR(TYPE_FLOAT, TYPE_FLOAT):
+        {
+            double u = value_to_f64(v1);
+            double v = value_to_f64(v2);
+            // TODO: check overflow and underflow
+            r = value_from_f64(u + v, arena, err);
+        }
+        break;
+
+        default:
+        REPORT(err, "Invalid operation '+' on non-numeric value");
+        return VALUE_ERROR;
+    }
+
+    return r;
 }
 
-static void value_to_string_inner(Value v, ToStringContext *tostr)
+static Value value_sub(Value v1, Value v2, WL_Arena *arena, Error *err)
 {
-    switch (type_of(v)) {
+    Type t1 = value_type(v1);
+    Type t2 = value_type(v2);
+
+    Value r;
+    switch (TYPE_PAIR(t1, t2)) {
+
+        case TYPE_PAIR(TYPE_INT, TYPE_INT):
+        {
+            int64_t u = value_to_s64(v1);
+            int64_t v = value_to_s64(v2);
+            // TODO: check overflow and underflow
+            r = value_from_s64(u - v, arena, err);
+        }
+        break;
+
+        case TYPE_PAIR(TYPE_INT, TYPE_FLOAT):
+        {
+            double u = (double) value_to_s64(v1);
+            double v = value_to_f64(v2);
+            r = value_from_f64(u - v, arena, err);
+        }
+        break;
+
+        case TYPE_PAIR(TYPE_FLOAT, TYPE_INT):
+        {
+            double u = value_to_f64(v1);
+            double v = (double) value_to_s64(v2);
+            r = value_from_f64(u - v, arena, err);
+        }
+        break;
+
+        case TYPE_PAIR(TYPE_FLOAT, TYPE_FLOAT):
+        {
+            double u = value_to_f64(v1);
+            double v = value_to_f64(v2);
+            // TODO: check overflow and underflow
+            r = value_from_f64(u - v, arena, err);
+        }
+        break;
+
+        default:
+        REPORT(err, "Invalid operation '-' on non-numeric value");
+        return VALUE_ERROR;
+    }
+
+    return r;
+}
+
+static Value value_mul(Value v1, Value v2, WL_Arena *arena, Error *err)
+{
+    Type t1 = value_type(v1);
+    Type t2 = value_type(v2);
+
+    Value r;
+    switch (TYPE_PAIR(t1, t2)) {
+
+        case TYPE_PAIR(TYPE_INT, TYPE_INT):
+        {
+            int64_t u = value_to_s64(v1);
+            int64_t v = value_to_s64(v2);
+            // TODO: check overflow and underflow
+            r = value_from_s64(u * v, arena, err);
+        }
+        break;
+
+        case TYPE_PAIR(TYPE_INT, TYPE_FLOAT):
+        {
+            double u = (double) value_to_s64(v1);
+            double v = value_to_f64(v2);
+            r = value_from_f64(u * v, arena, err);
+        }
+        break;
+
+        case TYPE_PAIR(TYPE_FLOAT, TYPE_INT):
+        {
+            double u = value_to_f64(v1);
+            double v = (double) value_to_s64(v2);
+            r = value_from_f64(u * v, arena, err);
+        }
+        break;
+
+        case TYPE_PAIR(TYPE_FLOAT, TYPE_FLOAT):
+        {
+            double u = value_to_f64(v1);
+            double v = value_to_f64(v2);
+            // TODO: check overflow and underflow
+            r = value_from_f64(u * v, arena, err);
+        }
+        break;
+
+        default:
+        REPORT(err, "Invalid operation '*' on non-numeric value");
+        return VALUE_ERROR;
+    }
+
+    return r;
+}
+
+static Value value_div(Value v1, Value v2, WL_Arena *arena, Error *err)
+{
+    Type t1 = value_type(v1);
+    Type t2 = value_type(v2);
+
+    Value r;
+    switch (TYPE_PAIR(t1, t2)) {
+
+        case TYPE_PAIR(TYPE_INT, TYPE_INT):
+        {
+            // TODO: check division by 0
+
+            int64_t u = value_to_s64(v1);
+            int64_t v = value_to_s64(v2);
+            r = value_from_s64(u / v, arena, err);
+        }
+        break;
+
+        case TYPE_PAIR(TYPE_INT, TYPE_FLOAT):
+        {
+            // TODO: check division by 0
+
+            double u = (double) value_to_s64(v1);
+            double v = value_to_f64(v2);
+            r = value_from_f64(u / v, arena, err);
+        }
+        break;
+
+        case TYPE_PAIR(TYPE_FLOAT, TYPE_INT):
+        {
+            // TODO: check division by 0
+
+            double u = value_to_f64(v1);
+            double v = (double) value_to_s64(v2);
+            r = value_from_f64(u / v, arena, err);
+        }
+        break;
+
+        case TYPE_PAIR(TYPE_FLOAT, TYPE_FLOAT):
+        {
+            double u = value_to_f64(v1);
+            double v = value_to_f64(v2);
+            r = value_from_f64(u / v, arena, err);
+        }
+        break;
+
+        default:
+        REPORT(err, "Invalid operation '/' on non-numeric value");
+        return VALUE_ERROR;
+    }
+
+    return r;
+}
+
+static Value value_mod(Value v1, Value v2, WL_Arena *arena, Error *err)
+{
+    Type t1 = value_type(v1);
+    Type t2 = value_type(v2);
+
+    if (t1 != TYPE_INT || t2 != TYPE_INT) {
+        REPORT(err, "Invalid operation '%%' on non-integer value");
+        return VALUE_ERROR;
+    }
+
+    int64_t u = value_to_s64(v1);
+    int64_t v = value_to_s64(v2);
+    Value r = value_from_s64(u % v, arena, err);
+    return r;
+}
+
+static void value_convert_to_str_inner(Writer *w, Value v)
+{
+    Type t = value_type(v);
+    switch (t) {
 
         case TYPE_NONE:
-        //tostr_appends(tostr, S("none"));
         break;
 
         case TYPE_BOOL:
-        // TODO
-        //tostr_appends(tostr, get_bool(v) ? S("true") : S("false"));
+        write_text(w, v == VALUE_TRUE ? S("true") : S("false"));
         break;
 
         case TYPE_INT:
-        tostr_appendi(tostr, get_int(v));
+        write_text_s64(w, value_to_s64(v));
         break;
 
         case TYPE_FLOAT:
-        tostr_appendf(tostr, get_float(v));
+        write_text_f64(w, value_to_f64(v));
         break;
 
-        case TYPE_MAP:
-        {
-            tostr_appends(tostr, S("{ "));
-            MapValue *m = get_map(v);
-            MapItems *batch = &m->head;
-            while (batch) {
-
-                int num = ITEMS_PER_MAP_BATCH;
-                if (batch->next == NULL)
-                    num = m->tail_count;
-
-                for (int i = 0; i < num; i++) {
-                    value_to_string_inner(batch->keys[i], tostr);
-                    tostr_appends(tostr, S(": "));
-                    value_to_string_inner(batch->items[i], tostr);
-                    
-                    if (batch->next != NULL || i+1 < num)
-                        tostr_appends(tostr, S(", "));
-                }
-
-                batch = batch->next;
-            }
-            tostr_appends(tostr, S(" }"));
-        }
+        case TYPE_STRING:
+        write_text(w, value_to_str(v));
         break;
 
         case TYPE_ARRAY:
         {
-            ArrayValue *a = get_array(v);
-            ArrayItems *batch = &a->head;
-            int cursor = 0;
-            while (batch) {
-
-                int num = ITEMS_PER_ARRAY_BATCH;
-                if (batch->next == NULL)
-                    num = a->tail_count;
-
-                for (int i = 0; i < num; i++)
-                    value_to_string_inner(batch->items[i], tostr);
-
-                batch = batch->next;
-                cursor += num;
+            AggregateValue *agg = (void*) (v & ~(Value) 7);
+            for (int i = 0; i < agg->count; i++)
+                value_convert_to_str_inner(w, agg->vals[i]);
+            Extension *ext = agg->ext;
+            while (ext) {
+                for (int i = 0; i < ext->count; i++)
+                    value_convert_to_str_inner(w, ext->vals[i]);
+                ext = ext->next;
             }
         }
         break;
 
-        case TYPE_STRING:
-        tostr_appends(tostr, get_str(v));
+        case TYPE_MAP:
+        {
+            write_text(w, S("{"));
+            AggregateValue *agg = (void*) (v & ~(Value) 7);
+            for (int i = 0; i < agg->count; i += 2) {
+                value_convert_to_str_inner(w, agg->vals[i+0]);
+                write_text(w, S(": "));
+                value_convert_to_str_inner(w, agg->vals[i+1]);
+                if (i+2 < agg->count || agg->ext)
+                    write_text(w, S(", "));
+            }
+            Extension *ext = agg->ext;
+            while (ext) {
+                for (int i = 0; i < ext->count; i += 2) {
+                    value_convert_to_str_inner(w, ext->vals[i+0]);
+                    write_text(w, S(": "));
+                    value_convert_to_str_inner(w, ext->vals[i+1]);
+                    if (i+2 < ext->count || ext->next)
+                        write_text(w, S(", "));
+                }
+                ext = ext->next;
+            }
+            write_text(w, S("}"));
+        }
         break;
 
         case TYPE_ERROR:
-        tostr_appends(tostr, S("error"));
         break;
     }
 }
 
-int value_to_string(Value v, char *dst, int max)
+static int value_convert_to_str(Value v, char *dst, int cap)
 {
-    ToStringContext tostr = { dst, max, 0 };
-    value_to_string_inner(v, &tostr);
-    return tostr.len;
+    Writer w = { dst, cap, 0};
+    value_convert_to_str_inner(&w, v);
+    return w.len;
 }
 
-////////////////////////////////////////////////////////////////////////////////////////
-// src/eval.h
-////////////////////////////////////////////////////////////////////////////////////////
+#undef TYPE_PAIR
 
-#ifndef WL_EVAL_INCLUDED
-#define WL_EVAL_INCLUDED
+/////////////////////////////////////////////////////////////////////////
+// RUNTIME
+/////////////////////////////////////////////////////////////////////////
 
-#ifndef WL_AMALGAMATION
-#include "assemble.h"
-#endif
-
-// TODO: pretty sure this is unused
-int eval(WL_Program p, WL_Arena *a, char *errbuf, int errmax);
-
-#endif // WL_EVAL_INCLUDED
-
-////////////////////////////////////////////////////////////////////////////////////////
-// src/eval.c
-////////////////////////////////////////////////////////////////////////////////////////
-
-
-#ifndef WL_AMALGAMATION
-#include "includes.h"
-#include "value.h"
-#include "eval.h"
-#endif
-
-#define FRAME_LIMIT 128
-#define EVAL_STACK_LIMIT 128
-#define GROUP_LIMIT 128
+#define MAX_STACK 1024
+#define MAX_FRAMES 1024
+#define MAX_GROUPS 8
 
 typedef struct {
-    int group;
-    int return_addr;
+    int retaddr;
+    int varbase;
 } Frame;
 
-struct WL_State {
+typedef enum {
+    RUNTIME_BEGIN,
+    RUNTIME_LOOP,
+    RUNTIME_DONE,
+    RUNTIME_ERROR,
+    RUNTIME_OUTPUT,
+    RUNTIME_SYSVAR,
+    RUNTIME_SYSCALL,
+} RuntimeState;
+
+struct WL_Runtime {
+
+    RuntimeState state;
 
     String code;
     String data;
     int off;
 
-    bool trace;
-
-    WL_Arena *a;
-
-    char *errbuf;
-    int   errmax;
-    int   errlen;
+    int vars;
+    int stack;
+    Value values[MAX_STACK];
 
     int num_frames;
-    Frame frames[FRAME_LIMIT];
-
-    int   eval_depth;
-    Value eval_stack[EVAL_STACK_LIMIT];
+    Frame frames[MAX_FRAMES];
 
     int num_groups;
-    int groups[GROUP_LIMIT];
+    int groups[MAX_GROUPS];
 
-    int cur_print;
-    int num_prints;
+    WL_Arena *arena;
 
-    String sysvar;
-    String syscall;
-    bool syscall_error;
+    char  msg[128];
+    Error err;
+
     int stack_before_user;
-    int stack_base_for_user;
+    String str_for_user;
+    int num_output;
+    int cur_output;
+    char buf[128];
 };
 
-void eval_report(WL_State *state, char *fmt, ...)
+WL_Runtime *wl_runtime_init(WL_Arena *arena, WL_Program program)
 {
-    if (state->errmax == 0 || state->errlen > 0)
+    if (program.len < 3 * sizeof(uint32_t))
+        return NULL;
+
+    uint32_t magic;
+    uint32_t code_len;
+    uint32_t data_len;
+
+    memcpy(&magic   , program.ptr + 0, sizeof(uint32_t));
+    memcpy(&code_len, program.ptr + 4, sizeof(uint32_t));
+    memcpy(&data_len, program.ptr + 8, sizeof(uint32_t));
+
+    if (magic != WL_MAGIC)
+        return NULL;
+
+    String code = { program.ptr + sizeof(uint32_t) * 3           , code_len };
+    String data = { program.ptr + sizeof(uint32_t) * 3 + code_len, data_len };
+
+    WL_Runtime *rt = alloc(arena, SIZEOF(WL_Runtime), ALIGNOF(WL_Runtime));
+    if (rt == NULL)
+        return NULL;
+
+    *rt = (WL_Runtime) {
+        .state      = RUNTIME_BEGIN,
+        .code       = code,
+        .data       = data,
+        .off        = 0,
+        .stack      = 0,
+        .vars       = MAX_STACK-1,
+        .num_frames = 0,
+        .arena      = arena,
+        .err        = { NULL, 0, false },
+    };
+    rt->err.buf = rt->msg;
+    rt->err.cap = SIZEOF(rt->msg);
+
+    rt->frames[rt->num_frames++] = (Frame) {
+        .retaddr = 0,
+        .varbase = rt->vars,
+    };
+
+    return rt;
+}
+
+WL_String wl_runtime_error(WL_Runtime *rt)
+{
+    return rt->err.yes
+        ? (WL_String) { rt->msg, strlen(rt->msg) }
+        : (WL_String) { NULL, 0 };
+}
+
+static void rt_read_mem(WL_Runtime *r, void *dst, int len)
+{
+    ASSERT(r->off + len <= r->code.len);
+    memcpy(dst, r->code.ptr + r->off, len);
+    r->off += len;
+}
+
+static uint8_t rt_read_u8(WL_Runtime *rt)
+{
+    ASSERT(rt->state == RUNTIME_LOOP);
+
+    uint8_t x;
+    rt_read_mem(rt, &x, SIZEOF(x));
+
+    return x;
+}
+
+static uint32_t rt_read_u32(WL_Runtime *rt)
+{
+    ASSERT(rt->state == RUNTIME_LOOP);
+
+    uint32_t x;
+    rt_read_mem(rt, &x, SIZEOF(x));
+
+    return x;
+}
+
+static int64_t rt_read_s64(WL_Runtime *rt)
+{
+    ASSERT(rt->state == RUNTIME_LOOP);
+
+    int64_t x;
+    rt_read_mem(rt, &x, SIZEOF(x));
+
+    return x;
+}
+
+static double rt_read_f64(WL_Runtime *rt)
+{
+    ASSERT(rt->state == RUNTIME_LOOP);
+
+    double x;
+    rt_read_mem(rt, &x, SIZEOF(x));
+
+    return x;
+}
+
+static String rt_read_str(WL_Runtime *rt)
+{
+    ASSERT(rt->state == RUNTIME_LOOP);
+    uint32_t off = rt_read_u32(rt);
+    uint32_t len = rt_read_u32(rt);
+    ASSERT(off + len <= rt->data.len);
+    return (String) { rt->data.ptr + off, len };
+}
+
+static Value *rt_variable(WL_Runtime *rt, uint8_t x)
+{
+    ASSERT(rt->num_frames > 0);
+
+    Frame *frame = &rt->frames[rt->num_frames-1];
+
+    ASSERT(frame->varbase - x >= 0
+        && frame->varbase - x < MAX_STACK);
+
+    return &rt->values[frame->varbase - x];
+}
+
+static int values_usage(WL_Runtime *rt)
+{
+    int num_vars = (MAX_STACK - rt->vars - 1);
+    return rt->stack + num_vars;
+}
+
+static bool rt_check_stack(WL_Runtime *rt, int min)
+{
+    if (MAX_STACK - values_usage(rt) < min) {
+        REPORT(&rt->err, "Out of stack");
+        rt->state = RUNTIME_ERROR;
+        return false;
+    }
+    return true;
+}
+
+static bool rt_push_frame(WL_Runtime *rt, uint8_t args)
+{
+    if (rt->num_frames == MAX_FRAMES) {
+        REPORT(&rt->err, "Call stack limit reached");
+        rt->state = RUNTIME_ERROR;
+        return false;
+    }
+
+    if (MAX_STACK - values_usage(rt) < args) {
+        REPORT(&rt->err, "Stack limit reached");
+        rt->state = RUNTIME_ERROR;
+        return false;
+    }
+
+    Frame *frame = &rt->frames[rt->num_frames++];
+    frame->retaddr = rt->off;
+    frame->varbase = rt->vars;
+
+    for (int i = 0; i < args; i++)
+        rt->values[rt->vars--] = rt->values[--rt->stack];
+
+    return true;
+}
+
+static void rt_pop_frame(WL_Runtime *rt)
+{
+    ASSERT(rt->num_frames > 0);
+    Frame *frame = &rt->frames[rt->num_frames-1];
+    rt->off  = frame->retaddr;
+    rt->vars = frame->varbase;
+    rt->num_frames--;
+}
+
+static void rt_set_frame_vars(WL_Runtime *rt, uint8_t num)
+{
+    ASSERT(rt->num_frames > 0);
+    Frame *frame = &rt->frames[rt->num_frames-1];
+    int num_vars = frame->varbase - rt->vars;
+    if (num_vars < num)
+        for (int i = 0; i < num - num_vars; i++)
+            rt->values[rt->vars - i] = VALUE_NONE;
+    rt->vars = frame->varbase - num;
+}
+
+static void rt_push_group(WL_Runtime *rt)
+{
+    if (rt->num_groups == MAX_GROUPS) {
+        REPORT(&rt->err, "Out of memory");
+        rt->state = RUNTIME_ERROR;
+        return;
+    }
+    rt->groups[rt->num_groups++] = rt->stack;
+}
+
+static void rt_pack_group(WL_Runtime *rt)
+{
+    if (!rt_check_stack(rt, 1))
         return;
 
-    int len = snprintf(state->errbuf, state->errmax, "Error: ");
-    if (len < 0) {
-        // TODO
+    ASSERT(rt->num_groups > 0);
+    int start = rt->groups[--rt->num_groups];
+    int end = rt->stack;
+
+    if (end - start > 1) {
+
+        Value set = value_empty_array(end - start, rt->arena, &rt->err);
+        if (set == VALUE_ERROR)
+            return;
+
+        for (int i = start; i < end; i++)
+            if (!value_append(set, rt->values[i], rt->arena, &rt->err))
+                return;
+
+        rt->stack = start;
+        rt->values[rt->stack++] = set;
     }
+}
 
-    va_list args;
-    va_start(args, fmt);
-    int ret = vsnprintf(state->errbuf + len, state->errmax - len, fmt, args);
-    va_end(args);
-    if (ret < 0) {
-        // TODO
+static void rt_pop_group(WL_Runtime *rt)
+{
+    ASSERT(rt->num_groups > 0);
+    rt->stack = rt->groups[--rt->num_groups];
+}
+
+static void value_print(Value v)
+{
+    char buf[1<<8];
+    int len = value_convert_to_str(v, buf, SIZEOF(buf));
+    if (len < SIZEOF(buf))
+        fwrite(buf, 1, len, stdout);
+    else {
+        len = SIZEOF(buf)-1;
+        fwrite(buf, 1, len, stdout);
+        fprintf(stdout, " [...]");
     }
-    len += ret;
-
-    state->errlen = len;
+    putc('\n', stdout);
+    fflush(stdout);
 }
 
-static uint8_t read_u8(WL_State *state)
+static void step(WL_Runtime *rt)
 {
-    assert(state->off >= 0);
-    assert(state->off < state->code.len);
-    return state->code.ptr[state->off++];
-}
+    switch (rt_read_u8(rt)) {
 
-static void read_mem(WL_State *state, void *dst, int len)
-{
-    memcpy(dst, (uint8_t*) state->code.ptr + state->off, len);
-    state->off += len;
-}
-
-static uint32_t read_u32(WL_State *state)
-{
-    uint32_t x;
-    read_mem(state, &x, (int) sizeof(x));
-    return x;
-}
-
-static int64_t read_s64(WL_State *state)
-{
-    int64_t x;
-    read_mem(state, &x, (int) sizeof(x));
-    return x;
-}
-
-static double read_f64(WL_State *state)
-{
-    double x;
-    read_mem(state, &x, (int) sizeof(x));
-    return x;
-}
-
-int step(WL_State *state)
-{
-    uint8_t opcode = read_u8(state);
-
-    if (state->trace) {
-        printf("%-3d: ", state->off-1);
-        print_instruction(state->code.ptr + state->off - 1, state->data.ptr);
-        printf("\n");
-    }
-
-    switch (opcode) {
+        Type t;
+        Value v1;
+        Value v2;
+        Value v3;
+        uint32_t o;
+        uint8_t  b1;
+        uint8_t  b2;
+        uint8_t  b3;
+        int64_t  i;
+        double   f;
+        String   s;
 
         case OPCODE_NOPE:
-        {
-            // Do nothing
-        }
-        break;
-
-        case OPCODE_EXIT:
-        {
-            return 1;
-        }
-        break;
-
-        case OPCODE_GROUP:
-        {
-            state->groups[state->num_groups++] = state->eval_depth;
-        }
-        break;
-
-        case OPCODE_GPOP:
-        {
-            int group = state->groups[--state->num_groups];
-            state->eval_depth = group;
-        }
-        break;
-
-        case OPCODE_GPRINT:
-        {
-            state->num_prints = state->eval_depth - state->groups[state->num_groups-1];
-        }
-        break;
-
-        case OPCODE_GCOALESCE:
-        {
-            state->num_groups--;
-        }
-        break;
-
-        case OPCODE_GTRUNC:
-        {
-            uint32_t num = read_u32(state);
-
-            int group_size = state->eval_depth - state->groups[state->num_groups-1];
-
-            if (group_size < (int) num)
-                for (int i = 0; i < (int) num - group_size; i++)
-                    state->eval_stack[state->eval_depth + i] = VALUE_NONE;
-
-            state->eval_depth = state->groups[state->num_groups-1] + num;
-        }
-        break;
-
-        case OPCODE_GOVERWRITE:
-        {
-            int current = state->groups[state->num_groups-1];
-            int parent  = state->groups[state->num_groups-2];
-
-            int current_size = state->eval_depth - current;
-
-            for (int i = 0; i < current_size; i++)
-                state->eval_stack[parent + i] = state->eval_stack[current + i];
-
-            state->num_groups--;
-            state->eval_depth = parent + current_size;
-        }
-        break;
-
-        case OPCODE_GPACK:
-        {
-            Value array = make_array(state->a);
-            if (array == VALUE_ERROR) {
-                eval_report(state, "Out of memory");
-                return -1;
-            }
-
-            for (int i = state->groups[state->num_groups-1]; i < state->eval_depth; i++) {
-                int ret = array_append(state->a, array, state->eval_stack[i]);
-                if (ret < 0) {
-                    eval_report(state, "Out of memory");
-                    return -1;
-                }
-            }
-
-            state->eval_depth = state->groups[--state->num_groups];
-            state->eval_stack[state->eval_depth++] = array;
-        }
-        break;
-
-        case OPCODE_PUSHN:
-        {
-            state->eval_stack[state->eval_depth++] = VALUE_NONE;
-        }
-        break;
-
-        case OPCODE_PUSHI:
-        {
-            int64_t x = read_s64(state);
-
-            Value v = make_int(state->a, x);
-            if (v == VALUE_ERROR) {
-                eval_report(state, "Out of memory");
-                return -1;
-            }
-
-            state->eval_stack[state->eval_depth++] = v;
-        }
-        break;
-
-        case OPCODE_PUSHF:
-        {
-            double x = read_f64(state);
-
-            Value v = make_float(state->a, x);
-            if (v == VALUE_ERROR) {
-                eval_report(state, "Out of memory");
-                return -1;
-            }
-
-            state->eval_stack[state->eval_depth++] = v;
-        }
-        break;
-
-        case OPCODE_PUSHS:
-        {
-            uint32_t off = read_u32(state);
-            uint32_t len = read_u32(state);
-
-            Value v = make_str(state->a, (String) { state->data.ptr + off, len });
-            if (v == VALUE_ERROR) {
-                eval_report(state, "Out of memory");
-                return -1;
-            }
-
-            state->eval_stack[state->eval_depth++] = v;
-        }
-        break;
-
-        case OPCODE_PUSHT:
-        {
-            state->eval_stack[state->eval_depth++] = VALUE_TRUE;
-        }
-        break;
-
-        case OPCODE_PUSHFL:
-        {
-            state->eval_stack[state->eval_depth++] = VALUE_FALSE;
-        }
-        break;
-
-        case OPCODE_PUSHV:
-        {
-            uint8_t idx = read_u8(state);
-
-            int group = state->frames[state->num_frames-1].group;
-            Value v = state->eval_stack[state->groups[group] + idx];
-
-            state->eval_stack[state->eval_depth++] = v;
-        }
-        break;
-
-        case OPCODE_PUSHA:
-        {
-            uint32_t cap = read_u32(state);
-            (void) cap;
-
-            Value v = make_array(state->a);
-            if (v == VALUE_ERROR) {
-                eval_report(state, "Out of memory");
-                return -1;
-            }
-
-            state->eval_stack[state->eval_depth++] = v;
-        }
-        break;
-
-        case OPCODE_PUSHM:
-        {
-            uint32_t cap = read_u32(state);
-            (void) cap;
-
-            Value v = make_map(state->a);
-            if (v == VALUE_ERROR) {
-                eval_report(state, "Out of memory");
-                return -1;
-            }
-
-            state->eval_stack[state->eval_depth++] = v;
-        }
-        break;
-
-        case OPCODE_POP:
-        {
-            assert(state->num_groups == 0 || state->eval_depth > state->groups[state->num_groups-1]);
-            state->eval_depth--;
-        }
-        break;
-
-        case OPCODE_NEG:
-        {
-            Value a = state->eval_stack[--state->eval_depth];
-            Type  t = type_of(a);
-
-            Value r;
-            if (0) {}
-            else if (t == TYPE_INT)   r = make_int(state->a, -get_int(a));
-            else if (t == TYPE_FLOAT) r = make_float(state->a, -get_float(a));
-            else {
-                eval_report(state, "Invalid operation on non-numeric value");
-                return -1;
-            }
-
-            if (r == VALUE_ERROR) {
-                eval_report(state, "Out of memory");
-                return -1;
-            }
-
-            state->eval_stack[state->eval_depth++] = r;
-        }
-        break;
-
-        case OPCODE_EQL:
-        {
-            Value a = state->eval_stack[state->eval_depth-2];
-            Value b = state->eval_stack[state->eval_depth-1];
-            state->eval_depth -= 2;
-
-            Value r = valeq(a, b) ? VALUE_TRUE : VALUE_FALSE;
-            state->eval_stack[state->eval_depth++] = r;
-        }
-        break;
-
-        case OPCODE_NQL:
-        {
-            Value a = state->eval_stack[state->eval_depth-2];
-            Value b = state->eval_stack[state->eval_depth-1];
-            state->eval_depth -= 2;
-
-            Value r = valeq(a, b) ? VALUE_FALSE : VALUE_TRUE;
-            state->eval_stack[state->eval_depth++] = r;
-        }
-        break;
-
-        case OPCODE_LSS:
-        {
-            Value a = state->eval_stack[state->eval_depth-2];
-            Value b = state->eval_stack[state->eval_depth-1];
-            state->eval_depth -= 2;
-
-            if (type_of(a) != TYPE_INT || type_of(b) != TYPE_INT) {
-                eval_report(state, "Invalid operation on non-numeric value");
-                return -1;
-            }
-
-            Value r = valgrt(a, b) || valeq(a, b) ? VALUE_FALSE : VALUE_TRUE;
-            state->eval_stack[state->eval_depth++] = r;
-        }
-        break;
-
-        case OPCODE_GRT:
-        {
-            Value a = state->eval_stack[state->eval_depth-2];
-            Value b = state->eval_stack[state->eval_depth-1];
-            state->eval_depth -= 2;
-
-            if (type_of(a) != TYPE_INT || type_of(b) != TYPE_INT) {
-                eval_report(state, "Invalid operation on non-numeric value");
-                return -1;
-            }
-
-            Value r = valgrt(a, b) ? VALUE_TRUE : VALUE_FALSE;
-            state->eval_stack[state->eval_depth++] = r;
-        }
-        break;
-
-        case OPCODE_ADD:
-        {
-            Value a = state->eval_stack[state->eval_depth-2];
-            Value b = state->eval_stack[state->eval_depth-1];
-            state->eval_depth -= 2;
-
-            #define TYPE_PAIR(X, Y) (((uint16_t) (X) << 16) | (uint16_t) (Y))
-
-            Type t1 = type_of(a);
-            Type t2 = type_of(b);
-
-            Value r;
-            switch (TYPE_PAIR(t1, t2)) {
-
-                case TYPE_PAIR(TYPE_INT, TYPE_INT):
-                {
-                    int64_t u = get_int(a);
-                    int64_t v = get_int(b);
-                    // TODO: check overflow and underflow
-                    r = make_int(state->a, u + v);
-                }
-                break;
-
-                case TYPE_PAIR(TYPE_INT, TYPE_FLOAT):
-                {
-                    float u = (float) get_int(a);
-                    float v = get_float(b);
-                    r = make_float(state->a, u + v);
-                }
-                break;
-
-                case TYPE_PAIR(TYPE_FLOAT, TYPE_INT):
-                {
-                    float u = get_float(a);
-                    float v = (float) get_int(b);
-                    r = make_float(state->a, u + v);
-                }
-                break;
-
-                case TYPE_PAIR(TYPE_FLOAT, TYPE_FLOAT):
-                {
-                    float u = get_float(a);
-                    float v = get_float(b);
-                    // TODO: check overflow and underflow
-                    r = make_float(state->a, u + v);
-                }
-                break;
-
-                default:
-                eval_report(state, "Invalid operation on non-numeric value");
-                return -1;
-            }
-
-            if (r == VALUE_ERROR) {
-                eval_report(state, "Out of memory");
-                return -1;
-            }
-
-            state->eval_stack[state->eval_depth++] = r;
-        }
-        break;
-
-        case OPCODE_SUB:
-        {
-            Value a = state->eval_stack[state->eval_depth-2];
-            Value b = state->eval_stack[state->eval_depth-1];
-            state->eval_depth -= 2;
-
-            Type t1 = type_of(a);
-            Type t2 = type_of(b);
-
-            Value r;
-            switch (TYPE_PAIR(t1, t2)) {
-
-                case TYPE_PAIR(TYPE_INT, TYPE_INT):
-                {
-                    int64_t u = get_int(a);
-                    int64_t v = get_int(b);
-                    // TODO: check overflow and underflow
-                    r = make_int(state->a, u - v);
-                }
-                break;
-
-                case TYPE_PAIR(TYPE_INT, TYPE_FLOAT):
-                {
-                    float u = (float) get_int(a);
-                    float v = get_float(b);
-                    r = make_float(state->a, u - v);
-                }
-                break;
-
-                case TYPE_PAIR(TYPE_FLOAT, TYPE_INT):
-                {
-                    float u = get_float(a);
-                    float v = (float) get_int(b);
-                    r = make_float(state->a, u - v);
-                }
-                break;
-
-                case TYPE_PAIR(TYPE_FLOAT, TYPE_FLOAT):
-                {
-                    float u = get_float(a);
-                    float v = get_float(b);
-                    // TODO: check overflow and underflow
-                    r = make_float(state->a, u - v);
-                }
-                break;
-
-                default:
-                eval_report(state, "Invalid operation on non-numeric value");
-                return -1;
-            }
-
-            if (r == VALUE_ERROR) {
-                eval_report(state, "Out of memory");
-                return -1;
-            }
-
-            state->eval_stack[state->eval_depth++] = r;
-        }
-        break;
-
-        case OPCODE_MUL:
-        {
-            Value a = state->eval_stack[state->eval_depth-2];
-            Value b = state->eval_stack[state->eval_depth-1];
-            state->eval_depth -= 2;
-
-            Type t1 = type_of(a);
-            Type t2 = type_of(b);
-
-            Value r;
-            switch (TYPE_PAIR(t1, t2)) {
-
-                case TYPE_PAIR(TYPE_INT, TYPE_INT):
-                {
-                    int64_t u = get_int(a);
-                    int64_t v = get_int(b);
-                    // TODO: check overflow and underflow
-                    r = make_int(state->a, u * v);
-                }
-                break;
-
-                case TYPE_PAIR(TYPE_INT, TYPE_FLOAT):
-                {
-                    float u = (float) get_int(a);
-                    float v = get_float(b);
-                    r = make_float(state->a, u * v);
-                }
-                break;
-
-                case TYPE_PAIR(TYPE_FLOAT, TYPE_INT):
-                {
-                    float u = get_float(a);
-                    float v = (float) get_int(b);
-                    r = make_float(state->a, u * v);
-                }
-                break;
-
-                case TYPE_PAIR(TYPE_FLOAT, TYPE_FLOAT):
-                {
-                    float u = get_float(a);
-                    float v = get_float(b);
-                    // TODO: check overflow and underflow
-                    r = make_float(state->a, u * v);
-                }
-                break;
-
-                default:
-                eval_report(state, "Invalid operation on non-numeric value");
-                return -1;
-            }
-
-            if (r == VALUE_ERROR) {
-                eval_report(state, "Out of memory");
-                return -1;
-            }
-
-            state->eval_stack[state->eval_depth++] = r;
-        }
-        break;
-
-        case OPCODE_DIV:
-        {
-            Value a = state->eval_stack[state->eval_depth-2];
-            Value b = state->eval_stack[state->eval_depth-1];
-            state->eval_depth -= 2;
-
-            Type t1 = type_of(a);
-            Type t2 = type_of(b);
-
-            Value r;
-            switch (TYPE_PAIR(t1, t2)) {
-
-                case TYPE_PAIR(TYPE_INT, TYPE_INT):
-                {
-                    // TODO: check division by 0
-
-                    int64_t u = get_int(a);
-                    int64_t v = get_int(b);
-                    r = make_int(state->a, u / v);
-                }
-                break;
-
-                case TYPE_PAIR(TYPE_INT, TYPE_FLOAT):
-                {
-                    // TODO: check division by 0
-
-                    float u = (float) get_int(a);
-                    float v = get_float(b);
-                    r = make_float(state->a, u / v);
-                }
-                break;
-
-                case TYPE_PAIR(TYPE_FLOAT, TYPE_INT):
-                {
-                    // TODO: check division by 0
-
-                    float u = get_float(a);
-                    float v = (float) get_int(b);
-                    r = make_float(state->a, u / v);
-                }
-                break;
-
-                case TYPE_PAIR(TYPE_FLOAT, TYPE_FLOAT):
-                {
-                    float u = get_float(a);
-                    float v = get_float(b);
-                    r = make_float(state->a, u / v);
-                }
-                break;
-
-                default:
-                eval_report(state, "Invalid operation on non-numeric value");
-                return -1;
-            }
-
-            if (r == VALUE_ERROR) {
-                eval_report(state, "Out of memory");
-                return -1;
-            }
-
-            state->eval_stack[state->eval_depth++] = r;
-        }
-        break;
-
-        case OPCODE_MOD:
-        {
-            Value a = state->eval_stack[state->eval_depth-2];
-            Value b = state->eval_stack[state->eval_depth-1];
-            state->eval_depth -= 2;
-
-            Type t1 = type_of(a);
-            Type t2 = type_of(b);
-
-            if (t1 != TYPE_INT || t2 != TYPE_INT) {
-                eval_report(state, "Invalid modulo operation on non-integer value");
-                return -1;
-            }
-
-            int64_t u = get_int(a);
-            int64_t v = get_int(b);
-            Value r = make_int(state->a, u % v);
-            if (r == VALUE_ERROR) {
-                eval_report(state, "Out of memory");
-                return -1;
-            }
-
-            state->eval_stack[state->eval_depth++] = r;
-        }
-        break;
-
-        case OPCODE_SETV:
-        {
-            uint8_t x = read_u8(state);
-
-            Frame *f = &state->frames[state->num_frames-1];
-            state->eval_stack[state->groups[f->group] + x] = state->eval_stack[--state->eval_depth];
-        }
         break;
 
         case OPCODE_JUMP:
-        {
-            uint32_t x = read_u32(state);
-            state->off = x;
-        }
+        rt->off = rt_read_u32(rt);
         break;
 
         case OPCODE_JIFP:
-        {
-            uint32_t x = read_u32(state);
-            Value a = state->eval_stack[--state->eval_depth];
-
-            if (a == VALUE_FALSE)
-                state->off = x;
-            else {
-                if (a != VALUE_TRUE) {
-                    eval_report(state, "Invalid operation on non-boolean value");
-                    return -1;
-                }
-            }
+        ASSERT(rt->stack > 0);
+        o = rt_read_u32(rt);
+        v1 = rt->values[--rt->stack];
+        if (v1 == VALUE_FALSE)
+            rt->off = o;
+        else if (value_type(v1) != TYPE_BOOL) {
+            REPORT(&rt->err, "Invalid non-boolean condition");
+            rt->state = RUNTIME_ERROR;
+            break;
         }
         break;
 
-        case OPCODE_CALL:
-        {
-            uint32_t off = read_u32(state);
-
-            if (state->num_frames == FRAME_LIMIT) {
-                eval_report(state, "Frame limit reached");
-                return -1;
-            }
-            state->frames[state->num_frames++] = (Frame) {.return_addr=state->off, .group=state->num_groups-1};
-
-            state->off = off;
-        }
+        case OPCODE_VARS:
+        b1 = rt_read_u8(rt);
+        rt_set_frame_vars(rt, b1);
         break;
 
-        case OPCODE_RET:
-        {
-            state->off = state->frames[--state->num_frames].return_addr;
-        }
-        break;
-
-        case OPCODE_APPEND:
-        {
-            Value val = state->eval_stack[state->eval_depth-1];
-            Value set = state->eval_stack[state->eval_depth-2];
-            state->eval_depth--;
-
-            if (type_of(set) != TYPE_ARRAY) {
-                eval_report(state, "Invalid operation on non-array value");
-                return -1;
-            }
-
-            int ret = array_append(state->a, set, val);
-            if (ret < 0) {
-                eval_report(state, "Out of memory");
-                return -1;
-            }
-        }
-        break;
-
-        case OPCODE_INSERT1:
-        {
-            Value key = state->eval_stack[state->eval_depth-1];
-            Value val = state->eval_stack[state->eval_depth-2];
-            Value set = state->eval_stack[state->eval_depth-3];
-            state->eval_depth -= 2;
-
-            if (type_of(set) == TYPE_ARRAY) {
-
-                if (type_of(key) != TYPE_INT) {
-                    assert(0); // TODO
-                }
-                int64_t idx = get_int(key);
-
-                Value *dst = array_select(set, idx);
-                if (dst == NULL) {
-                    eval_report(state, "Index out of range");
-                    return -1;
-                }
-                *dst = val;
-
-            } else if (type_of(set) == TYPE_MAP) {
-
-                int ret = map_insert(state->a, set, key, val);
-                if (ret < 0) {
-                    eval_report(state, "Out of memory");
-                    return -1;
-                }
-
-            } else {
-                eval_report(state, "Invalid insertion on non-array and non-map value");
-                return -1;
-            }
-        }
-        break;
-
-        case OPCODE_INSERT2:
-        {
-            Value key = state->eval_stack[state->eval_depth-1];
-            Value set = state->eval_stack[state->eval_depth-2];
-            Value val = state->eval_stack[state->eval_depth-3];
-            state->eval_depth -= 2;
-
-            if (type_of(set) == TYPE_ARRAY) {
-
-                if (type_of(key) != TYPE_INT) {
-                    assert(0); // TODO
-                }
-                int64_t idx = get_int(key);
-
-                Value *dst = array_select(set, idx);
-                if (dst == NULL) {
-                    eval_report(state, "Index out of range");
-                    return -1;
-                }
-                *dst = val;
-
-            } else if (type_of(set) == TYPE_MAP) {
-
-                int ret = map_insert(state->a, set, key, val);
-                if (ret < 0) {
-                    eval_report(state, "Out of memory");
-                    return -1;
-                }
-
-            } else {
-                eval_report(state, "Invalid insertion on non-array and non-map value");
-                return -1;
-            }
-        }
-        break;
-
-        case OPCODE_SELECT:
-        {
-            Value key = state->eval_stack[state->eval_depth-1];
-            Value set = state->eval_stack[state->eval_depth-2];
-            state->eval_depth -= 2;
-
-            Value r;
-            if (type_of(set) == TYPE_ARRAY) {
-
-                if (type_of(key) != TYPE_INT) {
-                    assert(0); // TODO
-                }
-                int64_t idx = get_int(key);
-
-                Value *src = array_select(set, idx);
-                if (src == NULL) {
-                    eval_report(state, "Index out of range");
-                    return -1;
-                }
-                r = *src;
-
-            } else if (type_of(set) == TYPE_MAP) {
-
-                int ret = map_select(set, key, &r);
-                if (ret < 0) {
-                    eval_report(state, "Key not contained in map");
-                    return -1;
-                }
-
-            } else {
-                eval_report(state, "Invalid selection from non-array and non-map value");
-                return -1;
-            }
-
-            state->eval_stack[state->eval_depth++] = r;
-        }
-        break;
-
-        case OPCODE_PRINT:
-        {
-            state->num_prints = 1;
+        case OPCODE_OUTPUT:
+        if (rt->stack > 0) {
+            rt->cur_output = 0;
+            rt->num_output = rt->stack;
+            rt->state = RUNTIME_OUTPUT;
         }
         break;
 
         case OPCODE_SYSVAR:
-        {
-            uint32_t off = read_u32(state);
-            uint32_t len = read_u32(state);
-            String name = { state->data.ptr + off, len };
-
-            state->sysvar = name;
-            state->stack_before_user = state->eval_depth;
-            state->stack_base_for_user = state->groups[state->num_groups-1];
-        }
+        s = rt_read_str(rt);
+        rt_push_frame(rt, 0);
+        rt->stack_before_user = rt->stack;
+        rt->str_for_user = s;
+        rt->state = RUNTIME_SYSVAR;
         break;
 
         case OPCODE_SYSCALL:
-        {
-            uint32_t off = read_u32(state);
-            uint32_t len = read_u32(state);
-            String name = { state->data.ptr + off, len };
+        b1 = rt_read_u8(rt);
+        s = rt_read_str(rt);
+        rt_push_frame(rt, b1);
+        rt->stack_before_user = rt->stack;
+        rt->str_for_user = s;
+        rt->state = RUNTIME_SYSCALL;
+        break;
 
-            int num_args = state->eval_depth - state->groups[state->num_groups-1];
+        case OPCODE_CALL:
+        b1 = rt_read_u8(rt);
+        o = rt_read_u32(rt);
+        rt_push_frame(rt, b1);
+        rt->off = o;
+        break;
 
-            Value v = make_int(state->a, num_args);
-            if (v == VALUE_ERROR) {
-                assert(0); // TODO
-            }
-            state->eval_stack[state->eval_depth++] = v;
+        case OPCODE_RET:
+        rt_pop_frame(rt);
+        break;
 
-            state->syscall = name;
-            state->stack_before_user = state->eval_depth;
-            state->stack_base_for_user = state->groups[state->num_groups-1];
-        }
+        case OPCODE_GROUP:
+        rt_push_group(rt);
+        break;
+
+        case OPCODE_PACK:
+        rt_pack_group(rt);
+        break;
+
+        case OPCODE_GPOP:
+        rt_pop_group(rt);
         break;
 
         case OPCODE_FOR:
-        {
-            uint8_t  var_3 = read_u8(state);
-            uint8_t  var_1 = read_u8(state);
-            uint8_t  var_2 = read_u8(state);
-            uint32_t end   = read_u32(state);
+        b1 = rt_read_u8(rt);
+        b2 = rt_read_u8(rt);
+        b3 = rt_read_u8(rt);
+        o  = rt_read_u32(rt);
 
-            int base;
-            {
-                int group = state->frames[state->num_frames-1].group;
-                base  = state->groups[group];
-            }
+        v1 = *rt_variable(rt, b3);
+        ASSERT(value_type(v1) == TYPE_INT);
+        i = value_to_s64(v1);
 
-            int64_t idx;
-            {
-                Value idx_val = state->eval_stack[base + var_2];
-                if (type_of(idx_val) != TYPE_INT) {
-                    assert(0); // TODO
-                }
-                idx = get_int(idx_val);
-            }
+        v2 = *rt_variable(rt, b1);
 
-            Value set = state->eval_stack[base + var_3];
-
-            Type set_type = type_of(set);
-            if (set_type == TYPE_ARRAY) {
-
-                if (value_length(set) == idx) {
-                    state->off = end;
-                    break;
-                }
-
-                state->eval_stack[base + var_1] = *array_select(set, idx);
-
-            } else if (set_type == TYPE_MAP) {
-
-                if (value_length(set) == idx) {
-                    state->off = end;
-                    break;
-                }
-
-                state->eval_stack[base + var_1] = *map_select_by_index(set, idx);
-
-            } else {
-                assert(0); // TODO
-            }
-
-            Value v = make_int(state->a, idx + 1);
-            if (v == VALUE_ERROR) {
-                assert(0); // TODO
-            }
-            state->eval_stack[base + var_2] = v;
+        if (value_length(v2)-1 == i) {
+            rt->off = o;
+            break;
         }
+        i++;
+
+        v1 = value_select_by_index(v2, i, &rt->err);
+        if (v1 == VALUE_ERROR) break;
+
+        *rt_variable(rt, b2) = v1;
+
+        v1 = value_from_s64(i, rt->arena, &rt->err); // TODO: this could be in-place
+        *rt_variable(rt, b3) = v1;
+        break;
+
+        case OPCODE_EXIT:
+        rt->state = RUNTIME_DONE;
+        break;
+
+        case OPCODE_POP:
+        ASSERT(rt->stack > 0);
+        rt->stack--;
+        break;
+
+        case OPCODE_SETV:
+        ASSERT(rt->stack > 0);
+        b1 = rt_read_u8(rt);
+        *rt_variable(rt, b1) =  rt->values[rt->stack-1];
+        break;
+
+        case OPCODE_PUSHV:
+        if (!rt_check_stack(rt, 1)) break;
+        b1 = rt_read_u8(rt);
+        rt->values[rt->stack++] = *rt_variable(rt, b1);
+        break;
+
+        case OPCODE_PUSHI:
+        if (!rt_check_stack(rt, 1)) break;
+        i = rt_read_s64(rt);
+        v1 = value_from_s64(i, rt->arena, &rt->err);
+        rt->values[rt->stack++] = v1;
+        break;
+
+        case OPCODE_PUSHF:
+        if (!rt_check_stack(rt, 1)) break;
+        f = rt_read_f64(rt);
+        v1 = value_from_f64(f, rt->arena, &rt->err);
+        rt->values[rt->stack++] = v1;
+        break;
+
+        case OPCODE_PUSHS:
+        if (!rt_check_stack(rt, 1)) break;
+        s = rt_read_str(rt);
+        v1 = value_from_str(s, rt->arena, &rt->err);
+        rt->values[rt->stack++] = v1;
+        break;
+
+        case OPCODE_PUSHA:
+        if (!rt_check_stack(rt, 1)) break;
+        o = rt_read_u32(rt);
+        v1 = value_empty_array(o, rt->arena, &rt->err);
+        rt->values[rt->stack++] = v1;
+        break;
+
+        case OPCODE_PUSHM:
+        if (!rt_check_stack(rt, 1)) break;
+        o = rt_read_u32(rt);
+        v1 = value_empty_map(o, rt->arena, &rt->err);
+        rt->values[rt->stack++] = v1;
+        break;
+
+        case OPCODE_PUSHN:
+        if (!rt_check_stack(rt, 1)) break;
+        rt->values[rt->stack++] = VALUE_NONE;
+        break;
+
+        case OPCODE_PUSHT:
+        if (!rt_check_stack(rt, 1)) break;
+        rt->values[rt->stack++] = VALUE_TRUE;
+        break;
+
+        case OPCODE_PUSHFL:
+        if (!rt_check_stack(rt, 1)) break;
+        rt->values[rt->stack++] = VALUE_FALSE;
         break;
 
         case OPCODE_LEN:
-        {
-            Value set = state->eval_stack[state->eval_depth-1];
-
-            Type type = type_of(set);
-            if (type != TYPE_ARRAY && type != TYPE_MAP) {
-                assert(0); // TODO
-            }
-
-            Value len = make_int(state->a, value_length(set));
-            if (len == VALUE_ERROR) {
-                assert(0); // TODO
-            }
-
-            state->eval_stack[state->eval_depth++] = len;
+        ASSERT(rt->stack > 0);
+        v1 = rt->values[rt->stack-1];
+        t = value_type(v1);
+        if (t != TYPE_ARRAY && t != TYPE_MAP) {
+            REPORT(&rt->err, "Invalid operation 'len' on non-aggregate value");
+            rt->state = RUNTIME_ERROR;
+            break;
         }
+        v2 = value_from_s64(value_length(v1), rt->arena, &rt->err);
+        rt->values[rt->stack-1] = v2;
+        break;
+
+        case OPCODE_NEG:
+        ASSERT(rt->stack > 0);
+        v1 = rt->values[rt->stack-1];
+        v2 = value_neg(v1, rt->arena, &rt->err);
+        rt->values[rt->stack-1] = v2;
+        break;
+
+        case OPCODE_EQL:
+        ASSERT(rt->stack > 1);
+        v1 = rt->values[--rt->stack];
+        v2 = rt->values[--rt->stack];
+        v3 = value_eql(v2, v1) ? VALUE_TRUE : VALUE_FALSE;
+        rt->values[rt->stack++] = v3;
+        break;
+
+        case OPCODE_NQL:
+        ASSERT(rt->stack > 1);
+        v1 = rt->values[--rt->stack];
+        v2 = rt->values[--rt->stack];
+        v3 = value_nql(v2, v1) ? VALUE_TRUE : VALUE_FALSE;
+        rt->values[rt->stack++] = v3;
+        break;
+
+        case OPCODE_LSS:
+        ASSERT(rt->stack > 1);
+        v1 = rt->values[--rt->stack];
+        v2 = rt->values[--rt->stack];
+        v3 = value_lower(v2, v1, &rt->err) ? VALUE_TRUE : VALUE_FALSE;
+        rt->values[rt->stack++] = v3;
+        break;
+
+        case OPCODE_GRT:
+        ASSERT(rt->stack > 1);
+        v1 = rt->values[--rt->stack];
+        v2 = rt->values[--rt->stack];
+        v3 = value_greater(v2, v1, &rt->err) ? VALUE_TRUE : VALUE_FALSE;
+        rt->values[rt->stack++] = v3;
+        break;
+
+        case OPCODE_ADD:
+        ASSERT(rt->stack > 1);
+        v1 = rt->values[--rt->stack];
+        v2 = rt->values[--rt->stack];
+        v3 = value_add(v2, v1, rt->arena, &rt->err);
+        rt->values[rt->stack++] = v3;
+        break;
+
+        case OPCODE_SUB:
+        ASSERT(rt->stack > 1);
+        v1 = rt->values[--rt->stack];
+        v2 = rt->values[--rt->stack];
+        v3 = value_sub(v2, v1, rt->arena, &rt->err);
+        rt->values[rt->stack++] = v3;
+        break;
+
+        case OPCODE_MUL:
+        ASSERT(rt->stack > 1);
+        v1 = rt->values[--rt->stack];
+        v2 = rt->values[--rt->stack];
+        v3 = value_mul(v2, v1, rt->arena, &rt->err);
+        rt->values[rt->stack++] = v3;
+        break;
+
+        case OPCODE_DIV:
+        ASSERT(rt->stack > 1);
+        v1 = rt->values[--rt->stack];
+        v2 = rt->values[--rt->stack];
+        v3 = value_div(v2, v1, rt->arena, &rt->err);
+        rt->values[rt->stack++] = v3;
+        break;
+
+        case OPCODE_MOD:
+        ASSERT(rt->stack > 1);
+        v1 = rt->values[--rt->stack];
+        v2 = rt->values[--rt->stack];
+        v3 = value_mod(v2, v1, rt->arena, &rt->err);
+        rt->values[rt->stack++] = v3;
+        break;
+
+        case OPCODE_APPEND:
+        ASSERT(rt->stack > 1);
+        v2 = rt->values[--rt->stack];
+        v1 = rt->values[rt->stack-1];
+        value_append(v1, v2, rt->arena, &rt->err);
+        break;
+
+        case OPCODE_INSERT1:
+        ASSERT(rt->stack > 2);
+        v1 = rt->values[--rt->stack];
+        v2 = rt->values[--rt->stack];
+        v3 = rt->values[rt->stack-1];
+        value_insert(v3, v1, v2, rt->arena, &rt->err);
+        break;
+
+        case OPCODE_INSERT2:
+        ASSERT(rt->stack > 2);
+        v1 = rt->values[--rt->stack];
+        v2 = rt->values[--rt->stack];
+        v3 = rt->values[rt->stack-1];
+        value_insert(v2, v1, v3, rt->arena, &rt->err);
+        break;
+
+        case OPCODE_SELECT:
+        ASSERT(rt->stack > 1);
+        v1 = rt->values[--rt->stack];
+        v2 = rt->values[--rt->stack];
+        v3 = value_select(v2, v1, &rt->err);
+        rt->values[rt->stack++] = v3;
         break;
 
         default:
-        eval_report(state, "Invalid opcode (offset %d)", state->off-1);
-        return -1;
+        UNREACHABLE;
     }
-
-    return 0;
 }
 
-WL_State *WL_State_init(WL_Arena *a, WL_Program p, char *err, int errmax)
+WL_EvalResult wl_runtime_eval(WL_Runtime *rt)
 {
-    WL_State *state = alloc(a, (int) sizeof(WL_State), _Alignof(WL_State));
-    if (state == NULL)
-        return NULL;
+    if (rt->state != RUNTIME_OUTPUT || rt->cur_output == rt->num_output) {
 
-    String code;
-    String data;
+        switch (rt->state) {
 
-    int ret = parse_program_header(p, &code, &data, err, errmax);
-    if (ret < 0)
-        return NULL;
+            case RUNTIME_BEGIN:
+            break;
 
-    *state = (WL_State) {
-        .code=code,
-        .data=data,
-        .off=0,
-        .trace=false,
-        .a=a,
-        .errbuf=err,
-        .errmax=errmax,
-        .errlen=0,
-        .num_frames=0,
-        .eval_depth=0,
-        .num_groups=0,
-        .num_prints=0,
-        .cur_print=0,
-    };
+            case RUNTIME_DONE:
+            return (WL_EvalResult) { .type=WL_EVAL_DONE };
 
-    state->frames[state->num_frames++] = (Frame) { 0, 0 };
+            case RUNTIME_ERROR:
+            return (WL_EvalResult) { .type=WL_EVAL_ERROR };
 
-    return state;
-}
+            case RUNTIME_OUTPUT:
+            rt->stack -= rt->num_output;
+            break;
 
-void WL_State_free(WL_State *state)
-{
-    state->num_frames--;
+            case RUNTIME_SYSVAR:
+            {
+                ASSERT(rt->stack >= rt->stack_before_user);
 
-    // TODO
-}
+                int pushed_by_user = rt->stack - rt->stack_before_user;
+                if (pushed_by_user > 1) {
+                    REPORT(&rt->err, "Invalid API usage");
+                    rt->state = RUNTIME_ERROR;
+                    return (WL_EvalResult) { .type=WL_EVAL_ERROR };
+                }
 
-void WL_State_trace(WL_State *state, int trace)
-{
-    state->trace = (trace != 0);
-}
+                if (rt->stack == rt->stack_before_user) {
+                    // User didn't push anything on the stack
+                    if (!rt_check_stack(rt, 1))
+                        return (WL_EvalResult) { .type=WL_EVAL_ERROR };
+                    rt->values[rt->stack++] = VALUE_NONE;
+                }
 
-WL_Result WL_eval(WL_State *state)
-{
-    if (state->sysvar.len > 0) {
-
-        if (state->syscall_error)
-            return (WL_Result) { WL_ERROR, (WL_String) { NULL, 0 } };
-
-        state->sysvar = S("");
-    }
-
-    if (state->syscall.len > 0) {
-
-        if (state->syscall_error)
-            return (WL_Result) { WL_ERROR, (WL_String) { NULL, 0 } };
-
-        int group = state->groups[state->num_groups-1];
-
-        Value v = state->eval_stack[--state->eval_depth];
-        if (type_of(v) != TYPE_INT) {
-            assert(0); // TODO
-        }
-        int64_t num_rets = get_int(v);
-        for (int i = 0; i < num_rets; i++)
-            state->eval_stack[group + i] = state->eval_stack[state->eval_depth - num_rets + i];
-
-        state->eval_depth = group + num_rets;
-
-        state->syscall = S("");
-    }
-
-    while (state->num_prints == 0) {
-
-        int ret = step(state);
-        if (ret < 0)  return (WL_Result) { WL_ERROR, (WL_String) { NULL, 0 } };
-        if (ret == 1) return (WL_Result) { WL_DONE,  (WL_String) { NULL, 0 } };
-
-        if (state->sysvar.len > 0)
-            return (WL_Result) { WL_VAR, (WL_String) { state->sysvar.ptr, state->sysvar.len } };
-
-        if (state->syscall.len > 0)
-            return (WL_Result) { WL_CALL, (WL_String) { state->syscall.ptr, state->syscall.len } };
-    }
-
-    Value v = state->eval_stack[state->eval_depth - state->num_prints + state->cur_print];
-        
-    state->cur_print++;
-    if (state->cur_print == state->num_prints) {
-        state->cur_print = 0;
-        state->num_prints = 0;
-    }
-
-    WL_String str;
-
-    if (type_of(v) == TYPE_STRING) {
-        String str2 = get_str(v);
-        str.ptr = str2.ptr;
-        str.len = str2.len;
-    } else {
-        int   cap = 8;
-        char *dst = alloc(state->a, cap, 1);
-        int   len = value_to_string(v, dst, cap);
-        if (len > cap) {
-            if (!grow_alloc(state->a, dst, len)) {
-                assert(0); // TODO
+                rt_pop_frame(rt);
             }
-            value_to_string(v, dst, len);
-        }
-        str.ptr = dst;
-        str.len = len;
-    }
+            break;
 
-    return (WL_Result) { WL_OUTPUT, str };
-}
+            case RUNTIME_SYSCALL:
+            ASSERT(rt->stack >= rt->stack_before_user);
+            rt_pop_frame(rt);
+            break;
 
-static bool in_syscall(WL_State *state)
-{
-    return (state->syscall.len > 0 || state->sysvar.len > 0) && !state->syscall_error;
-}
-
-int WL_peeknone(WL_State *state, int off)
-{
-    if (!in_syscall(state)) return 0;
-
-    if (state->eval_depth + off < state->stack_base_for_user || off >= 0)
-        return 0;
-
-    Value v = state->eval_stack[state->eval_depth + off];
-    if (type_of(v) != TYPE_NONE)
-        return 0;
-
-    return 1;
-}
-
-int WL_peekint(WL_State *state, int off, long long *x)
-{
-    if (!in_syscall(state)) return 0;
-
-    if (state->eval_depth + off < state->stack_base_for_user || off >= 0)
-        return 0;
-
-    Value v = state->eval_stack[state->eval_depth + off];
-    if (type_of(v) != TYPE_INT)
-        return 0;
-
-    *x = get_int(v);
-    return 1;
-}
-
-int WL_peekfloat(WL_State *state, int off, float *x)
-{
-    if (!in_syscall(state)) return 0;
-
-    if (state->eval_depth + off < state->stack_base_for_user || off >= 0)
-        return 0;
-
-    Value v = state->eval_stack[state->eval_depth + off];
-    if (type_of(v) != TYPE_FLOAT)
-        return 0;
-
-    *x = get_float(v);
-    return 1;
-}
-
-int WL_peekstr(WL_State *state, int off, WL_String *str)
-{
-    if (!in_syscall(state)) return 0;
-
-    if (state->eval_depth + off < state->stack_base_for_user || off >= 0)
-        return 0;
-
-    Value v = state->eval_stack[state->eval_depth + off];
-    if (type_of(v) != TYPE_STRING)
-        return 0;
-
-    String s = get_str(v);
-    *str = (WL_String) { s.ptr, s.len };
-    return 1;
-}
-
-int WL_popnone(WL_State *state)
-{
-    if (!in_syscall(state)) return 0;
-
-    if (state->eval_depth == state->stack_base_for_user)
-        return 0;
-
-    Value v = state->eval_stack[state->eval_depth-1];
-    if (type_of(v) != TYPE_NONE)
-        return 0;
-
-    state->eval_depth--;
-    return 1;
-}
-
-int WL_popint(WL_State *state, long long *x)
-{
-    if (!in_syscall(state)) return 0;
-
-    if (state->eval_depth == state->stack_base_for_user)
-        return 0;
-
-    Value v = state->eval_stack[state->eval_depth-1];
-    if (type_of(v) != TYPE_INT)
-        return 0;
-
-    *x = get_int(v);
-
-    state->eval_depth--;
-    return 1;
-}
-
-int WL_popfloat(WL_State *state, float *x)
-{
-    if (!in_syscall(state)) return 0;
-
-    if (state->eval_depth == state->stack_base_for_user)
-        return 0;
-
-    Value v = state->eval_stack[state->eval_depth-1];
-    if (type_of(v) != TYPE_FLOAT)
-        return 0;
-
-    *x = get_float(v);
-
-    state->eval_depth--;
-    return 1;
-}
-
-int WL_popstr(WL_State *state, WL_String *str)
-{
-    if (!in_syscall(state)) return 0;
-
-    if (state->eval_depth == state->stack_base_for_user)
-        return 0;
-
-    Value v = state->eval_stack[state->eval_depth-1];
-    if (type_of(v) != TYPE_STRING)
-        return 0;
-
-    String s = get_str(v);
-    *str = (WL_String) { s.ptr, s.len };
-
-    state->eval_depth--;
-    return 1;
-}
-
-int WL_popany(WL_State *state)
-{
-    if (!in_syscall(state))
-        return 0;
-
-    if (state->eval_depth == state->stack_base_for_user)
-        return 0;
-
-    state->eval_depth--;
-    return 1;
-}
-
-void WL_select(WL_State *state)
-{
-    Value key = state->eval_stack[--state->eval_depth];
-    Value set = state->eval_stack[state->eval_depth-1];
-    Value val;
-
-    Type set_type = type_of(set);
-    if (set_type == TYPE_ARRAY) {
-
-        Type key_type = type_of(key);
-        if (key_type != TYPE_INT) {
-            assert(0); // TODO
+            default:
+            UNREACHABLE;
         }
 
-        int64_t idx = get_int(key);
-        Value *src = array_select(set, idx);
-        if (src == NULL) {
-            assert(0); // TODO
-        }
-        val = *src;
+        rt->state = RUNTIME_LOOP;
 
-    } else if (set_type == TYPE_MAP) {
+        do {
 
-        int ret = map_select(set, key, &val);
-        if (ret < 0) {
-            assert(0); // TODO
-        }
+            step(rt);
 
-    } else {
+            if (rt->err.yes)
+                rt->state = RUNTIME_ERROR;
 
-        assert(0); // TODO
+        } while (rt->state == RUNTIME_LOOP);
+
     }
 
-    state->eval_stack[state->eval_depth++] = val;
-}
+    switch (rt->state) {
 
-void WL_pushnone(WL_State *state)
-{
-    if (!in_syscall(state)) return;
+        case RUNTIME_LOOP:
+        UNREACHABLE;
 
-    state->eval_stack[state->eval_depth++] = VALUE_NONE;
-}
+        case RUNTIME_DONE:
+        break;
 
-void WL_pushint(WL_State *state, long long x)
-{
-    if (!in_syscall(state)) return;
+        case RUNTIME_ERROR:
+        return (WL_EvalResult) { .type=WL_EVAL_ERROR };
 
-    Value v = make_int(state->a, x);
-    if (v == VALUE_ERROR) {
-        eval_report(state, "Out of memory");
-        state->syscall_error = true;
-        return;
-    }
+        case RUNTIME_OUTPUT:
+        {
+            ASSERT(rt->cur_output < rt->num_output);
 
-    state->eval_stack[state->eval_depth++] = v;
-}
+            Value v = rt->values[rt->stack - rt->num_output + rt->cur_output];
+            Type type = value_type(v);
 
-void WL_pushfloat(WL_State *state, float x)
-{
-    if (!in_syscall(state)) return;
+            String str;
+            if (type == TYPE_STRING)
+                str = value_to_str(v);
+            else {
+                int len = value_convert_to_str(v, rt->buf, SIZEOF(rt->buf));
+                if (len > SIZEOF(rt->buf)) {
+                    char *p = alloc(rt->arena, len, 1);
+                    if (p == NULL) {
+                        REPORT(&rt->err, "Out of memory");
+                        rt->state = RUNTIME_ERROR;
+                        return (WL_EvalResult) { .type=WL_EVAL_ERROR };
+                    }
+                    len = value_convert_to_str(v, p, len);
+                    str = (String) { p, len };
+                } else {
+                    str = (String) { rt->buf, len };
+                }
+            }
 
-    Value v = make_float(state->a, x);
-    if (v == VALUE_ERROR) {
-        eval_report(state, "Out of memory");
-        state->syscall_error = true;
-        return;
-    }
-
-    state->eval_stack[state->eval_depth++] = v;
-}
-
-void WL_pushstr(WL_State *state, WL_String str)
-{
-    if (!in_syscall(state)) return;
-
-    Value v = make_str(state->a, (String) { str.ptr, str.len });
-    if (v == VALUE_ERROR) {
-        eval_report(state, "Out of memory");
-        state->syscall_error = true;
-        return;
-    }
-
-    state->eval_stack[state->eval_depth++] = v;
-}
-
-void WL_pusharray(WL_State *state, int cap)
-{
-    if (!in_syscall(state)) return;
-
-    (void) cap;
-    Value v = make_array(state->a);
-    if (v == VALUE_ERROR) {
-        eval_report(state, "Out of memory");
-        state->syscall_error = true;
-        return;
-    }
-
-    state->eval_stack[state->eval_depth++] = v;
-}
-
-void WL_pushmap(WL_State *state, int cap)
-{
-    if (!in_syscall(state)) return;
-
-    (void) cap;
-    Value v = make_map(state->a);
-    if (v == VALUE_ERROR) {
-        eval_report(state, "Out of memory");
-        state->syscall_error = true;
-        return;
-    }
-
-    state->eval_stack[state->eval_depth++] = v;
-}
-
-void WL_insert(WL_State *state)
-{
-    Value key = state->eval_stack[--state->eval_depth];
-    Value val = state->eval_stack[--state->eval_depth];
-    Value set = state->eval_stack[state->eval_depth-1];
-
-    Type set_type = type_of(set);
-    if (set_type == TYPE_ARRAY) {
-
-        Type key_type = type_of(key);
-        if (key_type != TYPE_INT) {
-            assert(0); // TODO
+            rt->cur_output++;
+            return (WL_EvalResult) { .type=WL_EVAL_OUTPUT, .str={ str.ptr, str.len } };
         }
 
-        int64_t idx = get_int(key);
-        Value *dst = array_select(set, idx);
-        if (dst == NULL) {
-            assert(0); // TODO
-        }
-        *dst = val;
+        case RUNTIME_SYSVAR:
+        return (WL_EvalResult) { .type=WL_EVAL_SYSVAR, .str=(WL_String) { rt->str_for_user.ptr, rt->str_for_user.len } };
 
-    } else if (set_type == TYPE_MAP) {
-
-        int ret = map_insert(state->a, set, key, val);
-        if (ret < 0) {
-            assert(0); // TODO
-        }
-
-    } else {
-
-        assert(0); // TODO
+        case RUNTIME_SYSCALL:
+        return (WL_EvalResult) { .type=WL_EVAL_SYSCALL, .str=(WL_String) { rt->str_for_user.ptr, rt->str_for_user.len } };
     }
+
+    return (WL_EvalResult) { .type=WL_EVAL_DONE };
 }
 
-void WL_append(WL_State *state)
-{
-    Value val = state->eval_stack[--state->eval_depth];
-    Value set = state->eval_stack[state->eval_depth-1];
-
-    if (type_of(set) != TYPE_ARRAY) {
-        assert(0); // TODO
-        return;
-    }
-
-    if (array_append(state->a, set, val) < 0) {
-        assert(0); // TODO
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////////////
-// src/compile.c
-////////////////////////////////////////////////////////////////////////////////////////
-
-
-#ifndef WL_AMALGAMATION
-#include "eval.h"
-#include "parse.h"
-#include "assemble.h"
-#include "compile.h"
-#endif
-
-#define FILE_LIMIT 32
-
-typedef struct {
-    String file;
-    Node*  root;
-    Node*  includes;
-} CompiledFile;
-
-struct WL_Compiler {
-    WL_Arena*    arena;
-    CompiledFile files[FILE_LIMIT];
-    int          num_files;
-    String       waiting_file;
-};
-
-int WL_streq(WL_String a, char *b, int blen)
+bool wl_streq(WL_String a, char *b, int blen)
 {
     if (b == NULL) b = "";
     if (blen < 0) blen = strlen(b);
-
-    if (a.len != blen)
-        return 0;
-
-    for (int i = 0; i < a.len; i++)
-        if (a.ptr[i] != b[i])
-            return 0;
-
-    return 1;
+    return streq((String) { a.ptr, a.len }, (String) { b, blen });
 }
 
-WL_Compiler *WL_Compiler_init(WL_Arena *arena)
+int wl_arg_count(WL_Runtime *rt)
 {
-    WL_Compiler *compiler = alloc(arena, (int) sizeof(WL_Compiler), _Alignof(WL_Compiler));
-    if (compiler == NULL)
-        return NULL;
-    compiler->arena = arena;
-    compiler->num_files = 0;
-    compiler->waiting_file = (String) { NULL, 0 };
-    return compiler;
+    if (rt->state != RUNTIME_SYSVAR &&
+        rt->state != RUNTIME_SYSCALL)
+        return -1;
+
+    ASSERT(rt->num_frames > 0);
+    return rt->frames[rt->num_frames-1].varbase - rt->vars; // TODO: is this right?
 }
 
-void WL_Compiler_free(WL_Compiler *compiler)
+static Value user_arg(WL_Runtime *rt, int idx, Type type)
 {
-    (void) compiler;
-    // TODO
+    if (rt->state != RUNTIME_SYSVAR &&
+        rt->state != RUNTIME_SYSCALL)
+        return -1;
+
+    int tot = wl_arg_count(rt);
+    if (idx < 0 || idx >= tot)
+        return false;
+
+    Value v = *rt_variable(rt, tot - idx - 1);
+    if (value_type(v) != type)
+        return VALUE_ERROR;
+
+    return v;
 }
 
-WL_CompileResult WL_compile(WL_Compiler *compiler, WL_String file, WL_String content)
+bool wl_arg_none(WL_Runtime *rt, int idx)
 {
-    if (compiler->waiting_file.len > 0)
-        file = (WL_String) { compiler->waiting_file.ptr, compiler->waiting_file.len };
-    else {
-        // TODO: copy file path
-        // file = strdup(file, compiler->arena)
+    Value v = user_arg(rt, idx, TYPE_NONE);
+    if (v == VALUE_ERROR)
+        return false;
+    return true;
+}
+
+bool wl_arg_bool(WL_Runtime *rt, int idx, bool *x)
+{
+    Value v = user_arg(rt, idx, TYPE_BOOL);
+    if (v == VALUE_ERROR)
+        return false;
+    *x = (v == VALUE_TRUE);
+    return true;
+}
+
+bool wl_arg_s64(WL_Runtime *rt, int idx, int64_t *x)
+{
+    Value v = user_arg(rt, idx, TYPE_INT);
+    if (v == VALUE_ERROR)
+        return false;
+    *x = value_to_s64(v);
+    return true;
+}
+
+bool wl_arg_f64(WL_Runtime *rt, int idx, double *x)
+{
+    Value v = user_arg(rt, idx, TYPE_FLOAT);
+    if (v == VALUE_ERROR)
+        return false;
+    *x = value_to_f64(v);
+    return true;
+}
+
+bool wl_arg_str(WL_Runtime *rt, int idx, WL_String *x)
+{
+    Value v = user_arg(rt, idx, TYPE_STRING);
+    if (v == VALUE_ERROR)
+        return false;
+    String s = value_to_str(v);
+    *x = (WL_String) { s.ptr, s.len };
+    return true;
+}
+
+bool wl_arg_array(WL_Runtime *rt, int idx)
+{
+    Value v = user_arg(rt, idx, TYPE_ARRAY);
+    if (v == VALUE_ERROR)
+        return false;
+    return true;
+}
+
+bool wl_arg_map(WL_Runtime *rt, int idx)
+{
+    Value v = user_arg(rt, idx, TYPE_MAP);
+    if (v == VALUE_ERROR)
+        return false;
+    return true;
+}
+
+static Value user_peek(WL_Runtime *rt, int off, Type type)
+{
+    if (rt->state != RUNTIME_SYSVAR &&
+        rt->state != RUNTIME_SYSCALL)
+        return VALUE_ERROR;
+
+    if (rt->stack + off < rt->stack_before_user || off >= 0)
+        return VALUE_ERROR;
+
+    Value v = rt->values[rt->stack + off];
+    if (value_type(v) != type)
+        return VALUE_ERROR;
+
+    return v;
+}
+
+bool wl_peek_none(WL_Runtime *rt, int off)
+{
+    Value v = user_peek(rt, off, TYPE_NONE);
+    if (v == VALUE_ERROR)
+        return false;
+    return true;
+}
+
+bool wl_peek_bool(WL_Runtime *rt, int off, bool *x)
+{
+    Value v = user_peek(rt, off, TYPE_BOOL);
+    if (v == VALUE_ERROR)
+        return false;
+    *x = (v == VALUE_TRUE);
+    return true;
+}
+
+bool wl_peek_s64(WL_Runtime *rt, int off, int64_t *x)
+{
+    Value v = user_peek(rt, off, TYPE_INT);
+    if (v == VALUE_ERROR)
+        return false;
+    *x = value_to_s64(v);
+    return true;
+}
+
+bool wl_peek_f64(WL_Runtime *rt, int off, double *x)
+{
+    Value v = user_peek(rt, off, TYPE_FLOAT);
+    if (v == VALUE_ERROR)
+        return false;
+    *x = value_to_f64(v);
+    return true;
+}
+
+bool wl_peek_str(WL_Runtime *rt, int off, WL_String *x)
+{
+    Value v = user_peek(rt, off, TYPE_STRING);
+    if (v == VALUE_ERROR)
+        return false;
+    String s = value_to_str(v);
+    *x = (WL_String) { s.ptr, s.len };
+    return true;
+}
+
+bool wl_pop_any(WL_Runtime *rt)
+{
+    if (rt->state != RUNTIME_SYSVAR &&
+        rt->state != RUNTIME_SYSCALL)
+        return VALUE_ERROR;
+
+    if (rt->stack == rt->stack_before_user)
+        return false;
+
+    ASSERT(rt->stack > 0);
+    rt->stack--;
+    return true;
+}
+
+static Value user_pop(WL_Runtime *rt, Type type)
+{
+    if (rt->state != RUNTIME_SYSVAR &&
+        rt->state != RUNTIME_SYSCALL)
+        return VALUE_ERROR;
+
+    if (rt->stack == rt->stack_before_user)
+        return VALUE_ERROR;
+
+    ASSERT(rt->stack > 0);
+    Value v = rt->values[rt->stack-1];
+    if (value_type(v) != type)
+        return VALUE_ERROR;
+
+    rt->stack--;
+    return v;
+}
+
+bool wl_pop_none(WL_Runtime *rt)
+{
+    Value v = user_pop(rt, TYPE_NONE);
+    if (v == VALUE_ERROR)
+        return false;
+    return true;
+}
+
+bool wl_pop_bool(WL_Runtime *rt, bool *x)
+{
+    Value v = user_pop(rt, TYPE_BOOL);
+    if (v == VALUE_ERROR)
+        return false;
+    *x = (v == VALUE_TRUE);
+    return true;
+}
+
+bool wl_pop_s64(WL_Runtime *rt, int64_t *x)
+{
+    Value v = user_pop(rt, TYPE_INT);
+    if (v == VALUE_ERROR)
+        return false;
+    *x = value_to_s64(v);
+    return true;
+}
+
+bool wl_pop_f64(WL_Runtime *rt, double *x)
+{
+    Value v = user_pop(rt, TYPE_FLOAT);
+    if (v == VALUE_ERROR)
+        return false;
+    *x = value_to_f64(v);
+    return true;
+}
+
+bool wl_pop_str(WL_Runtime *rt, WL_String *x)
+{
+    Value v = user_pop(rt, TYPE_STRING);
+    if (v == VALUE_ERROR)
+        return false;
+    String s = value_to_str(v);
+    *x = (WL_String) { s.ptr, s.len };
+    return true;
+}
+
+void wl_push_none(WL_Runtime *rt)
+{
+    if (rt->state != RUNTIME_SYSVAR &&
+        rt->state != RUNTIME_SYSCALL)
+        return;
+
+    if (!rt_check_stack(rt, 1))
+        return;
+
+    rt->values[rt->stack++] = VALUE_NONE;
+}
+
+void wl_push_true(WL_Runtime *rt)
+{
+    if (rt->state != RUNTIME_SYSVAR &&
+        rt->state != RUNTIME_SYSCALL)
+        return;
+
+    if (!rt_check_stack(rt, 1))
+        return;
+
+    rt->values[rt->stack++] = VALUE_TRUE;
+}
+
+void wl_push_false(WL_Runtime *rt)
+{
+    if (rt->state != RUNTIME_SYSVAR &&
+        rt->state != RUNTIME_SYSCALL)
+        return;
+
+    if (!rt_check_stack(rt, 1))
+        return;
+
+    rt->values[rt->stack++] = VALUE_FALSE;
+}
+
+void wl_push_s64(WL_Runtime *rt, int64_t x)
+{
+    if (rt->state != RUNTIME_SYSVAR &&
+        rt->state != RUNTIME_SYSCALL)
+        return;
+
+    if (!rt_check_stack(rt, 1))
+        return;
+
+    Value v = value_from_s64(x, rt->arena, &rt->err);
+    if (v == VALUE_ERROR) {
+        rt->state = RUNTIME_ERROR;
+        return;
     }
 
-    char err[1<<9];
-    ParseResult pres = parse((String) { content.ptr, content.len }, compiler->arena, err, (int) sizeof(err));
-    if (pres.node == NULL) {
-        printf("%s\n", err); // TODO
-        return (WL_CompileResult) { .type=WL_COMPILE_RESULT_ERROR };
+    rt->values[rt->stack++] = v;
+}
+
+void wl_push_f64(WL_Runtime *rt, double x)
+{
+    if (rt->state != RUNTIME_SYSVAR &&
+        rt->state != RUNTIME_SYSCALL)
+        return;
+
+    if (!rt_check_stack(rt, 1))
+        return;
+
+    Value v = value_from_f64(x, rt->arena, &rt->err);
+    if (v == VALUE_ERROR) {
+        rt->state = RUNTIME_ERROR;
+        return;
     }
 
-    CompiledFile compiled_file = {
-        .file = { file.ptr, file.len },
-        .root = pres.node,
-        .includes = pres.includes,
-    };
-    compiler->files[compiler->num_files++] = compiled_file;
+    rt->values[rt->stack++] = v;
+}
 
-    for (int i = 0; i < compiler->num_files; i++) {
+void wl_push_str(WL_Runtime *rt, WL_String x)
+{
+    if (rt->state != RUNTIME_SYSVAR &&
+        rt->state != RUNTIME_SYSCALL)
+        return;
 
-        Node *include = compiler->files[i].includes;
-        while (include) {
+    if (!rt_check_stack(rt, 1))
+        return;
 
-            assert(include->type == NODE_INCLUDE);
+    Value v = value_from_str((String) { x.ptr, x.len }, rt->arena, &rt->err);
+    if (v == VALUE_ERROR) {
+        rt->state = RUNTIME_ERROR;
+        return;
+    }
 
-            if (include->include_root == NULL) {
-                for (int j = 0; j < compiler->num_files; j++) {
-                    if (streq(include->include_path, compiler->files[j].file)) {
-                        include->include_root = compiler->files[j].root;
-                        break;
-                    }
-                }
-            }
+    rt->values[rt->stack++] = v;
+}
 
-            if (include->include_root == NULL) {
+void wl_push_array(WL_Runtime *rt, int cap)
+{
+    if (rt->state != RUNTIME_SYSVAR &&
+        rt->state != RUNTIME_SYSCALL)
+        return;
 
-                if (compiler->num_files == FILE_LIMIT) {
-                    assert(0); // TODO
-                }
+    if (!rt_check_stack(rt, 1))
+        return;
 
-                // TODO: Make the path relative to the compiled file
+    Value v = value_empty_array(cap, rt->arena, &rt->err);
+    if (v == VALUE_ERROR) {
+        rt->state = RUNTIME_ERROR;
+        return;
+    }
 
-                compiler->waiting_file = include->include_path;
-                return (WL_CompileResult) { .type=WL_COMPILE_RESULT_FILE, .path={ include->include_path.ptr, include->include_path.len } };
-            }
+    rt->values[rt->stack++] = v;
+}
 
-            include = include->include_next;
+void wl_push_map(WL_Runtime *rt, int cap)
+{
+    if (rt->state != RUNTIME_SYSVAR &&
+        rt->state != RUNTIME_SYSCALL)
+        return;
+
+    if (!rt_check_stack(rt, 1))
+        return;
+
+    Value v = value_empty_map(cap, rt->arena, &rt->err);
+    if (v == VALUE_ERROR) {
+        rt->state = RUNTIME_ERROR;
+        return;
+    }
+
+    rt->values[rt->stack++] = v;
+}
+
+void wl_push_arg(WL_Runtime *rt, int idx)
+{
+    if (rt->state != RUNTIME_SYSVAR &&
+        rt->state != RUNTIME_SYSCALL)
+        return;
+
+    if (!rt_check_stack(rt, 1))
+        return;
+
+    int tot = wl_arg_count(rt);
+    if (idx < 0 || idx >= tot) {
+        REPORT(&rt->err, "Invalid API usagge");
+        rt->state = RUNTIME_ERROR;
+        return;
+    }
+
+    rt->values[rt->stack++] = *rt_variable(rt, tot - idx - 1);
+}
+
+void wl_insert(WL_Runtime *rt)
+{
+    if (rt->state != RUNTIME_SYSVAR &&
+        rt->state != RUNTIME_SYSCALL)
+        return;
+
+    if (rt->stack - rt->stack_before_user < 3) {
+        REPORT(&rt->err, "Invalid API usagge");
+        rt->state = RUNTIME_ERROR;
+        return;
+    }
+
+    Value key = rt->values[--rt->stack];
+    Value val = rt->values[--rt->stack];
+    Value set = rt->values[rt->stack-1];
+
+    if (!value_insert(set, key, val, rt->arena, &rt->err)) {
+        rt->state = RUNTIME_ERROR;
+        return;
+    }
+}
+
+void wl_append(WL_Runtime *rt)
+{
+    if (rt->state != RUNTIME_SYSVAR &&
+        rt->state != RUNTIME_SYSCALL)
+        return;
+
+     if (rt->stack - rt->stack_before_user < 2) {
+        REPORT(&rt->err, "Invalid API usagge");
+        rt->state = RUNTIME_ERROR;
+        return;
+    }
+
+    Value val = rt->values[--rt->stack];
+    Value set = rt->values[rt->stack-1];
+
+    if (!value_append(set, val, rt->arena, &rt->err)) {
+        rt->state = RUNTIME_ERROR;
+        return;
+    }
+}
+
+void wl_runtime_dump(WL_Runtime *rt)
+{
+    for (int i = 0; i < rt->num_frames; i++) {
+        printf("=== frame %d ===\n", i);
+        
+        Frame *frame = &rt->frames[i];
+
+        int num_vars;
+        if (i+1 < rt->num_frames)
+            num_vars = frame->varbase - rt->frames[i+1].varbase;
+        else
+            num_vars = frame->varbase - rt->vars;
+
+        for (int j = 0; j < num_vars; j++) {
+            printf("  %d = ", j);
+            value_print(rt->values[frame->varbase - j]);
         }
     }
-
-    AssembleResult ares = assemble(compiler->files[0].root, compiler->arena, err, (int) sizeof(err));
-    if (ares.errlen) {
-        printf("%s\n", err); // TODO
-        return (WL_CompileResult) { .type=WL_COMPILE_RESULT_ERROR };
-    }
-
-    return (WL_CompileResult) { .type=WL_COMPILE_RESULT_DONE, .program=ares.program };
-}
-
-void WL_dump_program(WL_Program program)
-{
-    print_program(program);
+    printf("===============\n");
 }

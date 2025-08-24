@@ -1,121 +1,189 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <assert.h>
+#include <stdlib.h>
+#include <string.h>
 #include <stdbool.h>
+#include "wl.h"
 
-#include "WL.h"
+typedef struct FileData FileData;
+
+struct FileData {
+    FileData *next;
+    int       size;
+    char      data[];
+};
+
+FileData *load_file(WL_String path)
+{
+    char buf[1<<10];
+    if (path.len >= (int) sizeof(buf))
+        return NULL;
+    memcpy(buf, path.ptr, path.len);
+    buf[path.len] = '\0';
+
+    FILE *f = fopen(buf, "rb");
+    if (f == NULL)
+        return NULL;
+
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    FileData *data = malloc(sizeof(FileData) + size);
+    if (data == NULL) {
+        fclose(f);
+        return NULL;
+    }
+    data->size = size;
+    data->next = NULL;
+
+    fread(data->data, 1, size, f);
+    fclose(f);
+    return data;
+}
 
 int main(int argc, char **argv)
 {
-    if (argc < 2) {
-        printf("Missing file path\n");
+    char *entry_file = NULL;
+
+    bool bc = false;
+    bool ast = false;
+    bool run = true;
+    for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--bc"))
+            bc = true;
+        else if (!strcmp(argv[i], "--ast"))
+            ast = true;
+        else if (!strcmp(argv[i], "--no-run"))
+            run = false;
+        else
+            entry_file = argv[i];
+    }
+
+    if (entry_file == NULL) {
+        fprintf(stderr, "Usage: %s file.wl\n", argv[0]);
         return -1;
     }
-    char *file = argv[1];
 
-    char err[1<<9];
-    char *mem = malloc(1<<20);
-    WL_Arena a = { mem, 1<<20, 0 };
-
-    WL_Compiler *compiler = WL_Compiler_init(&a);
-    if (compiler == NULL) {
-        assert(0); // TODO
+    int cap = 1<<20;
+    char *mem = malloc(cap);
+    if (mem == NULL) {
+        fprintf(stderr, "Error: Allocation failure\n");
+        return -1;
     }
+    WL_Arena arena = { mem, cap, 0 };
 
-    int num_loaded_files = 0;
-    char *loaded_files[128];
-
-    WL_CompileResult result;
-    WL_String path = { file, strlen(file) };
-    for (int i = 0;; i++) {
-
-        char buf[1<<10];
-        if (path.len >= (int) sizeof(buf)) {
-            assert(0); // TODO
-        }
-        memcpy(buf, path.ptr, path.len);
-        buf[path.len] = '\0';
-
-        FILE *f = fopen(buf, "rb");
-        if (f == NULL) {
-            printf("File not found '%.*s'\n", path.len, path.ptr);
+    WL_Program program;
+    {
+        WL_Compiler *c = wl_compiler_init(&arena);
+        if (c == NULL) {
+            fprintf(stderr, "Error: Out of memory");
             return -1;
         }
 
-        fseek(f, 0, SEEK_END);
-        long file_size = ftell(f);
-        fseek(f, 0, SEEK_SET);
+        FileData *file_head;
+        FileData **file_tail = &file_head;
 
-        char *file_data = malloc(file_size);
+        WL_String path = { entry_file, strlen(entry_file) };
+        for (;;) {
 
-        fread(file_data, 1, file_size, f);
-        fclose(f);
+            FileData *file = load_file(path);
+            if (file == NULL) {
+                printf("Couldn't open '%.*s'\n", path.len, path.ptr);
+                return -1;
+            }
+            *file_tail = file;
+            file_tail = &file->next;
 
-        result = WL_compile(compiler, path, (WL_String) { file_data, file_size });
-
-        loaded_files[num_loaded_files++] = file_data;
-
-        if (result.type == WL_COMPILE_RESULT_ERROR) {
-            printf("Compilation of '%.*s' failed\n", path.len, path.ptr);
+            WL_AddResult res = wl_compiler_add(c, (WL_String) { file->data, file->size });
+            if (res.type == WL_ADD_ERROR) {
+                fprintf(stderr, "Error: %s\n", wl_compiler_error(c).ptr);
+                return -1;
+            }
+            if (res.type == WL_ADD_AGAIN) {
+                path = res.path;
+                continue;
+            }
+            assert(res.type == WL_ADD_LINK);
             break;
         }
 
-        if (result.type == WL_COMPILE_RESULT_DONE)
-            break;
+        *file_tail = NULL;
 
-        assert(result.type == WL_COMPILE_RESULT_FILE);
-        path = result.path;
-    }
+        if (ast) {
+            char buf[1<<10];
+            int len = wl_dump_ast(c, buf, sizeof(buf));
+            if (len > sizeof(buf)-1)
+                len = sizeof(buf)-1;
+            buf[len] = '\0';
 
-    for (int i = 0; i < num_loaded_files; i++)
-        free(loaded_files[i]);
+            printf("%s\n", buf);
+        }
 
-    WL_Compiler_free(compiler);
+        int ret = wl_compiler_link(c, &program);
+        if (ret < 0) {
+            WL_String err = wl_compiler_error(c);
+            fprintf(stderr, "Error: %s\n", err.ptr);
+            return -1;
+        }
 
-    if (result.type == WL_COMPILE_RESULT_ERROR) {
-        printf("Compilation error\n");
-        return -1;
-    }
-    WL_Program program = result.program;
+        if (bc)
+            wl_dump_program(program);
 
-    WL_State *state = WL_State_init(&a, program, err, (int) sizeof(err));
-
-    WL_State_trace(state, 0);
-
-    for (bool done = false; !done; ) {
-
-        WL_Result result = WL_eval(state);
-        switch (result.type) {
-
-            case WL_DONE:
-            done = true;
-            break;
-
-            case WL_ERROR:
-            done = true;
-            printf("%s\n", err);
-            break;
-
-            case WL_VAR:
-            if (0) {}
-            else if (WL_streq(result.str, "varA", -1)) WL_pushint(state, 1);
-            else if (WL_streq(result.str, "varB", -1)) WL_pushint(state, 1);
-            else if (WL_streq(result.str, "varC", -1)) WL_pushint(state, 1);
-            break;
-
-            case WL_CALL:
-            // TODO
-            printf("(called [%.*s])\n", result.str.len, result.str.ptr);
-            break;
-
-            case WL_OUTPUT:
-            fwrite(result.str.ptr, 1, result.str.len, stdout);
-            break;
+        FileData *file = file_head;
+        while (file) {
+            FileData *next = file->next;
+            free(file);
+            file = next;
         }
     }
 
-    WL_State_free(state);
-    free(mem);
+    if (run) {
+        WL_Runtime *rt = wl_runtime_init(&arena, program);
+        if (rt == NULL) {
+            fprintf(stderr, "Error: Invalid program or out of memory\n");
+            return -1;
+        }
+
+        FILE *output = stdout;
+        for (bool done = false; !done; ) {
+            WL_EvalResult res = wl_runtime_eval(rt);
+
+            wl_runtime_dump(rt);
+
+            switch (res.type) {
+
+                case WL_EVAL_NONE:
+                break;
+
+                case WL_EVAL_DONE:
+                done = true;
+                break;
+
+                case WL_EVAL_ERROR:
+                printf("Error: %s\n", wl_runtime_error(rt).ptr);
+                return -1;
+
+                case WL_EVAL_OUTPUT:
+                fwrite(res.str.ptr, 1, res.str.len, output);
+                break;
+
+                case WL_EVAL_SYSVAR:
+                if (wl_streq(res.str, "varA", -1)) wl_push_s64(rt, 1);
+                if (wl_streq(res.str, "varB", -1)) wl_push_s64(rt, 7);
+                if (wl_streq(res.str, "varC", -1)) wl_push_s64(rt, 13);
+                break;
+
+                case WL_EVAL_SYSCALL:
+                if (wl_streq(res.str, "testfn", -1)) {
+                    for (int i = 0; i < wl_arg_count(rt); i++)
+                        wl_push_arg(rt, i);
+                }
+                break;
+            }
+        }
+    }
+
     return 0;
 }

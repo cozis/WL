@@ -1,2 +1,8 @@
+a.out
+coverage_html/
+test
+test.exe
+test_cov
 wl
-*.exe
+wl.exe
+wl_cov
