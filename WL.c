@@ -34,6 +34,7 @@ typedef struct {
 #define MAX(X, Y) ((X) > (Y) ? (X) : (Y))
 #define SIZEOF(X) (int) sizeof(X)
 #define ALIGNOF(X) (int) _Alignof(X)
+#define COUNT(X) (int) (sizeof(X)/sizeof((X)[0]))
 
 #ifndef NDEBUG
 #define UNREACHABLE __builtin_trap()
@@ -260,6 +261,7 @@ typedef enum {
     TOKEN_KWORD_FALSE,
     TOKEN_KWORD_INCLUDE,
     TOKEN_KWORD_LEN,
+    TOKEN_KWORD_ESCAPE,
     TOKEN_VALUE_FLOAT,
     TOKEN_VALUE_INT,
     TOKEN_VALUE_STR,
@@ -307,6 +309,7 @@ typedef enum {
     NODE_INCLUDE,
     NODE_SELECT,
     NODE_NESTED,
+    NODE_OPER_ESCAPE,
     NODE_OPER_LEN,
     NODE_OPER_POS,
     NODE_OPER_NEG,
@@ -430,6 +433,7 @@ static void write_token(Writer *w, Token token)
         case TOKEN_KWORD_FALSE  : write_text(w, S("false"));     break;
         case TOKEN_KWORD_INCLUDE: write_text(w, S("include"));   break;
         case TOKEN_KWORD_LEN    : write_text(w, S("len"));       break;
+        case TOKEN_KWORD_ESCAPE: write_text(w, S("escape")); break;
         case TOKEN_VALUE_FLOAT  : write_text_f64(w, token.fval); break;
         case TOKEN_VALUE_INT    : write_text_s64(w, token.ival); break;
         case TOKEN_OPER_ASS     : write_text(w, S("="));         break;
@@ -545,6 +549,7 @@ static Token next_token(Parser *p)
         if (streq(kword, S("false")))   return (Token) { .type=TOKEN_KWORD_FALSE   };
         if (streq(kword, S("include"))) return (Token) { .type=TOKEN_KWORD_INCLUDE };
         if (streq(kword, S("len")))     return (Token) { .type=TOKEN_KWORD_LEN     };
+        if (streq(kword, S("escape"))) return (Token) { .type=TOKEN_KWORD_ESCAPE };
 
         return (Token) { .type=TOKEN_IDENT, .sval=kword };
     }
@@ -1115,6 +1120,23 @@ static Node *parse_atom(Parser *p)
                 return NULL;
 
             parent->type = NODE_OPER_LEN;
+            parent->left = child;
+
+            ret = parent;
+        }
+        break;
+
+        case TOKEN_KWORD_ESCAPE:
+        {
+            Node *child = parse_atom(p);
+            if (child == NULL)
+                return NULL;
+
+            Node *parent = alloc_node(p);
+            if (parent == NULL)
+                return NULL;
+
+            parent->type = NODE_OPER_ESCAPE;
             parent->left = child;
 
             ret = parent;
@@ -1897,6 +1919,12 @@ static void write_node(Writer *w, Node *node)
         write_text(w, S(")"));
         break;
 
+        case NODE_OPER_ESCAPE:
+        write_text(w, S("(escape "));
+        write_node(w, node->left);
+        write_text(w, S(")"));
+        break;
+
         case NODE_OPER_POS:
         write_text(w, S("(+"));
         write_node(w, node->left);
@@ -2185,6 +2213,7 @@ enum {
     OPCODE_CALL,
     OPCODE_RET,
     OPCODE_GROUP,
+    OPCODE_ESCAPE,
     OPCODE_PACK,
     OPCODE_GPOP,
     OPCODE_FOR,
@@ -2600,7 +2629,7 @@ static void cg_write_pushs(Codegen *cg, String str, bool dont_group)
     }
 }
 
-static void walk_node(Codegen *cg, Node *node);
+static void walk_node(Codegen *cg, Node *node, bool inside_html);
 
 static void walk_expr_node(Codegen *cg, Node *node, bool one)
 {
@@ -2616,6 +2645,12 @@ static void walk_expr_node(Codegen *cg, Node *node, bool one)
         case NODE_OPER_LEN:
         walk_expr_node(cg, node->left, true);
         cg_write_opcode(cg, OPCODE_LEN);
+        break;
+
+        case NODE_OPER_ESCAPE:
+        cg_write_opcode(cg, OPCODE_GROUP);
+        walk_expr_node(cg, node->left, false);
+        cg_write_opcode(cg, OPCODE_ESCAPE);
         break;
 
         case NODE_OPER_POS:
@@ -2810,7 +2845,7 @@ static void walk_expr_node(Codegen *cg, Node *node, bool one)
 
             Node *child = node->html_attr;
             while (child) {
-                walk_node(cg, child);
+                walk_node(cg, child, true);
                 child = child->next;
             }
 
@@ -2820,7 +2855,7 @@ static void walk_expr_node(Codegen *cg, Node *node, bool one)
                 cg_write_pushs(cg, S(">"), false);
                 Node *child = node->html_child;
                 while (child) {
-                    walk_node(cg, child);
+                    walk_node(cg, child, true);
                     child = child->next;
                 }
                 cg_write_pushs(cg, S("</"), false);
@@ -2911,7 +2946,7 @@ static void walk_expr_node(Codegen *cg, Node *node, bool one)
     }
 }
 
-static void walk_node(Codegen *cg, Node *node)
+static void walk_node(Codegen *cg, Node *node, bool inside_html)
 {
     // TODO: remove
     ASSERT(cg->scopes[cg->num_scopes-1].calls == NULL || (cg->scopes[cg->num_scopes-1].calls - cg->calls >= 0 && cg->scopes[cg->num_scopes-1].calls - cg->calls < MAX_UNPATCHED_CALLS));
@@ -2921,7 +2956,7 @@ static void walk_node(Codegen *cg, Node *node)
         case NODE_GLOBAL:
         for (Node *child = node->left;
             child; child = child->next) {
-            walk_node(cg, child);
+            walk_node(cg, child, false);
         }
         break;
 
@@ -2929,7 +2964,7 @@ static void walk_node(Codegen *cg, Node *node)
         cg_push_scope(cg, SCOPE_COMPOUND);
         for (Node *child = node->left;
             child; child = child->next)
-            walk_node(cg, child);
+            walk_node(cg, child, inside_html);
         cg_pop_scope(cg);
         break;
 
@@ -2961,7 +2996,7 @@ static void walk_node(Codegen *cg, Node *node)
             int off1 = cg_write_opcode(cg, OPCODE_VARS);
             int off2 = cg_write_u8(cg, 0);
 
-            walk_node(cg, node->proc_body);
+            walk_node(cg, node->proc_body, false);
             cg_write_opcode(cg, OPCODE_RET);
 
             cg_patch_u8 (cg, off2, count_function_vars(cg));
@@ -3017,7 +3052,7 @@ static void walk_node(Codegen *cg, Node *node)
                 int p1 = cg_write_u32(cg, 0);
 
                 cg_push_scope(cg, SCOPE_IF);
-                walk_node(cg, node->if_branch1);
+                walk_node(cg, node->if_branch1, inside_html);
                 cg_pop_scope(cg);
 
                 cg_write_opcode(cg, OPCODE_JUMP);
@@ -3027,7 +3062,7 @@ static void walk_node(Codegen *cg, Node *node)
                 cg_patch_u32(cg, p1, cg_current_offset(cg));
 
                 cg_push_scope(cg, SCOPE_ELSE);
-                walk_node(cg, node->if_branch2);
+                walk_node(cg, node->if_branch2, inside_html);
                 cg_pop_scope(cg);
 
                 cg_flush_pushs(cg);
@@ -3041,7 +3076,7 @@ static void walk_node(Codegen *cg, Node *node)
                 int p1 = cg_write_u32(cg, 0);
 
                 cg_push_scope(cg, SCOPE_IF);
-                walk_node(cg, node->if_branch1);
+                walk_node(cg, node->if_branch1, inside_html);
                 cg_pop_scope(cg);
 
                 cg_flush_pushs(cg);
@@ -3075,7 +3110,7 @@ static void walk_node(Codegen *cg, Node *node)
             cg_write_u8(cg, var_2);
             int p = cg_write_u32(cg, 0);
 
-            walk_node(cg, node->left);
+            walk_node(cg, node->left, inside_html);
 
             cg_write_opcode(cg, OPCODE_JUMP);
             cg_write_u32(cg, start);
@@ -3104,7 +3139,7 @@ static void walk_node(Codegen *cg, Node *node)
             int p = cg_write_u32(cg, 0);
 
             cg_push_scope(cg, SCOPE_WHILE);
-            walk_node(cg, node->left);
+            walk_node(cg, node->left, inside_html);
             cg_pop_scope(cg);
 
             cg_write_opcode(cg, OPCODE_JUMP);
@@ -3115,12 +3150,12 @@ static void walk_node(Codegen *cg, Node *node)
         break;
 
         case NODE_INCLUDE:
-        walk_node(cg, node->include_root);
+        walk_node(cg, node->include_root, false);
         break;
 
         default:
         walk_expr_node(cg, node, false);
-        if (cg_global_scope(cg) && !inside_assignment(cg))
+        if (cg_global_scope(cg) && !inside_assignment(cg) && !inside_html)
             cg_write_opcode(cg, OPCODE_OUTPUT);
         break;
     }
@@ -3157,7 +3192,7 @@ static int codegen(Node *node, char *dst, int cap, char *errmsg, int errcap)
     cg_push_scope(&cg, SCOPE_GLOBAL);
     cg_write_opcode(&cg, OPCODE_VARS);
     int off = cg_write_u8(&cg, 0);
-    walk_node(&cg, node);
+    walk_node(&cg, node, false);
     cg_write_opcode(&cg, OPCODE_EXIT);
     cg_patch_u8(&cg, off, cg.scopes[0].max_vars);
     cg_pop_scope(&cg);
@@ -3258,6 +3293,10 @@ static int write_instr(Writer *w, char *src, int len, String data)
 
         case OPCODE_GROUP:
         write_text(w, S("GROUP\n"));
+        return 1;
+
+        case OPCODE_ESCAPE:
+        write_text(w, S("ESCAPE\n"));
         return 1;
 
         case OPCODE_PACK:
@@ -4436,29 +4475,7 @@ static void value_convert_to_str_inner(Writer *w, Value v)
         break;
 
         case TYPE_MAP:
-        {
-            write_text(w, S("{"));
-            AggregateValue *agg = (void*) (v & ~(Value) 7);
-            for (int i = 0; i < agg->count; i += 2) {
-                value_convert_to_str_inner(w, agg->vals[i+0]);
-                write_text(w, S(": "));
-                value_convert_to_str_inner(w, agg->vals[i+1]);
-                if (i+2 < agg->count || agg->ext)
-                    write_text(w, S(", "));
-            }
-            Extension *ext = agg->ext;
-            while (ext) {
-                for (int i = 0; i < ext->count; i += 2) {
-                    value_convert_to_str_inner(w, ext->vals[i+0]);
-                    write_text(w, S(": "));
-                    value_convert_to_str_inner(w, ext->vals[i+1]);
-                    if (i+2 < ext->count || ext->next)
-                        write_text(w, S(", "));
-                }
-                ext = ext->next;
-            }
-            write_text(w, S("}"));
-        }
+        write_text(w, S("<map>"));
         break;
 
         case TYPE_ERROR:
@@ -4471,6 +4488,140 @@ static int value_convert_to_str(Value v, char *dst, int cap)
     Writer w = { dst, cap, 0};
     value_convert_to_str_inner(&w, v);
     return w.len;
+}
+
+static Value value_escape_packed(Value v, WL_Arena *arena, Error *err);
+
+static int array_escape(Value v, Value *out, int max, WL_Arena *arena, Error *err)
+{
+    Value v2 = value_empty_array(value_length(v), arena, err);
+    if (v2 == VALUE_ERROR) return -1;
+
+    AggregateValue *src = (void*) (v  & ~(Value) 7);
+
+    for (int i = 0; i < src->count; i++) {
+
+        Value child = src->vals[i];
+
+        Value escaped_child = value_escape_packed(child, arena, err);
+        if (escaped_child == VALUE_ERROR)
+            return -1;
+
+        if (!value_append(v2, escaped_child, arena, err))
+            return -1;
+    }
+    Extension *ext = src->ext;
+    while (ext) {
+        for (int i = 0; i < ext->count; i++) {
+
+            Value child = src->vals[i];
+
+            Value escaped_child = value_escape_packed(child, arena, err);
+            if (escaped_child == VALUE_ERROR)
+                return -1;
+
+            if (!value_append(v2, escaped_child, arena, err))
+                return -1;
+        }
+        ext = ext->next;
+    }
+
+    if (max == 0)
+        return -1;
+    out[0] = v2;
+    return 1;
+}
+
+static int string_escape(Value v, Value *out, int max, WL_Arena *arena, Error *err)
+{
+    String s = value_to_str(v);
+
+    int i = 0;
+    int num = 0;
+    for (;;) {
+
+        int off = i;
+        while (i < s.len
+            && s.ptr[i] != '<'
+            && s.ptr[i] != '>'
+            && s.ptr[i] != '&'
+            && s.ptr[i] != '"'
+            && s.ptr[i] != '\'')
+            i++;
+        String substr = { s.ptr + off, i - off };
+
+        Value escaped_v = value_from_str(substr, arena, err); // TODO: don't copy the string
+        if (escaped_v == VALUE_ERROR) return -1;
+
+        if (num == max) {
+            REPORT(err, "Escape buffer limit reached");
+            return -1;
+        }
+        out[num++] = escaped_v;
+
+        if (i == s.len) break;
+
+        switch (s.ptr[i++]) {
+            case '<' : escaped_v = value_from_str(S("&lt;"),   arena, err); break; // TODO: don't come these strings
+            case '>' : escaped_v = value_from_str(S("&gt;"),   arena, err); break;
+            case '&' : escaped_v = value_from_str(S("&amp;"),  arena, err); break;
+            case '"' : escaped_v = value_from_str(S("&quot;"), arena, err); break;
+            case '\'': escaped_v = value_from_str(S("&#x27;"), arena, err); break;
+        }
+        if (escaped_v == VALUE_ERROR) return -1;
+
+        if (num == max) {
+            REPORT(err, "Escape buffer limit reached");
+            return -1;
+        }
+        out[num++] = escaped_v;
+    }
+
+    return num;
+}
+
+static int value_escape(Value v, Value *out, int max, WL_Arena *arena, Error *err)
+{
+    Type t = value_type(v);
+
+    if (t == TYPE_ARRAY)
+        return array_escape(v, out, max, arena, err);
+
+    if (t == TYPE_STRING)
+        return string_escape(v, out, max, arena, err);
+
+    if (max < 1)
+        return -1;
+    out[0] = v;
+    return 1;
+}
+
+static Value value_escape_packed(Value v, WL_Arena *arena, Error *err)
+{
+    Value tmp[32];
+    int num = value_escape(v, tmp, COUNT(tmp), arena, err);
+    if (num < 0) return VALUE_ERROR;
+
+    Value escaped_v;
+
+    if (num > 1) {
+
+        Value packed = value_empty_array(num, arena, err);
+        if (packed == VALUE_ERROR)
+            return VALUE_ERROR;
+
+        for (int j = 0; j < num; j++)
+            if (!value_append(packed, tmp[j], arena, err))
+                return VALUE_ERROR;
+        escaped_v = packed;
+
+    } else {
+
+        ASSERT(num == 1);
+        escaped_v = tmp[0];
+    }
+
+    return escaped_v;
 }
 
 #undef TYPE_PAIR
@@ -4842,6 +4993,37 @@ static void step(WL_Runtime *rt)
 
         case OPCODE_GROUP:
         rt_push_group(rt);
+        break;
+
+        case OPCODE_ESCAPE:
+        {
+            ASSERT(rt->num_groups > 0);
+            int start = rt->groups[--rt->num_groups];
+            int end = rt->stack;
+
+            Value escaped[256];
+            int num_escaped = 0;
+
+            for (int i = start; i < end; i++) {
+                Value v = rt->values[i];
+                int num = value_escape(v, escaped + num_escaped, COUNT(escaped) - num_escaped, rt->arena, &rt->err);
+                if (num < 0) break;
+                num_escaped += num;
+            }
+
+            if (num_escaped > COUNT(escaped)) {
+                REPORT(&rt->err, "Escape buffer limit reached");
+                rt->state = RUNTIME_ERROR;
+                break;
+            }
+
+            rt->stack = start;
+            if (!rt_check_stack(rt, num_escaped)) break;
+
+            for (int i = 0; i < num_escaped; i++)
+                rt->values[rt->stack + i] = escaped[i];
+            rt->stack += num_escaped;
+        }
         break;
 
         case OPCODE_PACK:

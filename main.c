@@ -150,7 +150,7 @@ int main(int argc, char **argv)
         for (bool done = false; !done; ) {
             WL_EvalResult res = wl_runtime_eval(rt);
 
-            wl_runtime_dump(rt);
+            //wl_runtime_dump(rt);
 
             switch (res.type) {
 

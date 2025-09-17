@@ -1,6 +1,5 @@
+let username = <script>alert('You\'ve been HACKED!')</script>
 
-let a = []
+<span>Hello, my name is \escape(username)</span>
 
-a << 1 << 2
 
-a
