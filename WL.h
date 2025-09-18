@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdbool.h>
 
 typedef struct WL_Runtime  WL_Runtime;
 typedef struct WL_Compiler WL_Compiler;
