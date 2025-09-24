@@ -3585,7 +3585,7 @@ WL_Compiler *wl_compiler_init(WL_Arena *arena)
     return compiler;
 }
 
-WL_AddResult wl_compiler_add(WL_Compiler *compiler, WL_String content)
+WL_AddResult wl_compiler_add(WL_Compiler *compiler, WL_String path, WL_String content)
 {
     if (compiler->err)
         return (WL_AddResult) { .type=WL_ADD_ERROR };
@@ -3594,6 +3594,38 @@ WL_AddResult wl_compiler_add(WL_Compiler *compiler, WL_String content)
     if (pres.node == NULL) {
         compiler->err = true;
         return (WL_AddResult) { .type=WL_ADD_ERROR };
+    }
+
+    // Make include paths relative to the parent file
+    if (path.len > 0) {
+
+        String parent = { path.ptr, path.len };
+
+        char sep = '/';
+        while (parent.len > 0 && parent.ptr[parent.len-1] != sep)
+            parent.len--;
+
+        if (parent.len > 0) {
+            Node *include = pres.includes;
+            while (include) {
+
+                char *dst = alloc(compiler->arena, parent.len + include->include_path.len + 1, 1);
+                if (dst == NULL) {
+                    // TODO
+                }
+
+                memcpy(dst,
+                    parent.ptr,
+                    parent.len);
+                memcpy(dst + parent.len,
+                    include->include_path.ptr,
+                    include->include_path.len);
+
+                include->include_path = (String) { dst, parent.len + include->include_path.len };
+
+                include = include->include_next;
+            }
+        }
     }
 
     CompiledFile compiled_file = {

@@ -46,7 +46,7 @@ typedef struct {
 } WL_EvalResult;
 
 WL_Compiler*  wl_compiler_init  (WL_Arena *arena);
-WL_AddResult  wl_compiler_add   (WL_Compiler *compiler, WL_String content);
+WL_AddResult  wl_compiler_add   (WL_Compiler *compiler, WL_String path, WL_String content);
 int           wl_compiler_link  (WL_Compiler *compiler, WL_Program *program);
 WL_String     wl_compiler_error (WL_Compiler *compiler);
 int           wl_dump_ast       (WL_Compiler *compiler, char *dst, int cap);
