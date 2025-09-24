@@ -3,7 +3,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+
+#ifndef WL_NOINCLUDE
 #include "wl.h"
+#endif
 
 /////////////////////////////////////////////////////////////////////////
 // BASIC
