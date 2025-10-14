@@ -96,7 +96,7 @@ int main(int argc, char **argv)
             *file_tail = file;
             file_tail = &file->next;
 
-            WL_AddResult res = wl_compiler_add(c, (WL_String) { file->data, file->size });
+            WL_AddResult res = wl_compiler_add(c, path, (WL_String) { file->data, file->size });
             if (res.type == WL_ADD_ERROR) {
                 fprintf(stderr, "Error: %s\n", wl_compiler_error(c).ptr);
                 return -1;

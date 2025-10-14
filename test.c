@@ -138,7 +138,7 @@ int run_test(char *in, char *out, void *mem, int cap, int test_line)
         return -1;
     }
 
-    WL_AddResult res = wl_compiler_add(c, (WL_String) { in, strlen(in) });
+    WL_AddResult res = wl_compiler_add(c, (WL_String) { NULL, 0 }, (WL_String) { in, strlen(in) });
     if (res.type == WL_ADD_ERROR) {
         fprintf(stderr, "Error: %s\n", wl_compiler_error(c).ptr);
         return -1;
@@ -205,16 +205,7 @@ int run_test(char *in, char *out, void *mem, int cap, int test_line)
         fprintf(stderr, "  Expected: [%s]\n", out);
 #if 1
         fprintf(stderr, "  Program:\n");
-        char buf[1<<10];
-        int len = wl_dump_program(program, buf, sizeof(buf));
-        if (len < 0)
-            fprintf(stderr, "    (Invalid program)\n");
-        else if (len >= sizeof(buf)) {
-            fprintf(stderr, "    (Program disassembly is too big)\n");
-        } else {
-            buf[len] = '\0';
-            fprintf(stderr, "%s", buf);
-        }
+        wl_dump_program(program);
 #endif
         return 0;
     }
