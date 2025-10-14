@@ -2,13 +2,13 @@
 WL is a powerful and flexible, yet experimental scripting language for templating with first-class support for HTML.
 
 ## Features
-1. *Zero dependencies* - It only uses pure C and the standard library
-2. *Single-file implementation* - Everything is inside `wl.c` and `wl.h`
-3. *HTML-first design* - Native HTML syntax with embedded scripting 
-4. *Complete scripting language* - Variables, functions, loops, conditional branches, arrays, maps. We've got it all!
-5. Built-in XSS protection - `escape()` function to sanitize dynamic HTML
-6. *No I/O or dynamic allocations* - Any I/O or memory management is left to the user
-7. *Include system* - Modular template composition over multiple files
+1. **Zero dependencies** - It only uses pure C and the standard library
+2. **Single-file implementation** - Everything is inside `wl.c` and `wl.h`
+3. **HTML-first design** - Native HTML syntax with embedded scripting 
+4. **Complete scripting language** - Variables, functions, loops, conditional branches, arrays, maps. We've got it all!
+5. **Built-in XSS protection** - `escape()` function to sanitize dynamic HTML
+6. **No I/O or dynamic allocations** - Any I/O or memory management is left to the user
+7. **Include system** - Modular template composition over multiple files
 
 ## Language
 
@@ -439,3 +439,7 @@ If the program performs call to an external function, the VM will return a resul
 The parent program can then get the number of arguments using the `wl_arg_count` function and `wl_push_arg` to set the top of the VM stack to the argument with the specified index. The argument can then be read using one of the `wl_pop_*` functions.
 
 The caller then needs to push the return value of the call on top of the stack using one of the `wl_push_*` functions.
+
+## Building
+
+To build WL with your program, just drop the `wl.c` and `wl.h` files in your own source tree and compile them as any other file.
