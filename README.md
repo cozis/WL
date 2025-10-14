@@ -223,7 +223,7 @@ let fruit = ["Orange", "Apple"]
 
     <ul>
     \for item in fruit:
-        <li>\fruit</li>
+        <li>\item</li>
     </ul>
 </p>
 ```
@@ -241,6 +241,14 @@ let navigator =
         \for name in links:
             <a href=\links[name]>\name</a>
     </nav>
+```
+
+### HTML escaping
+
+If you want to ascape any value to avoid rendering dynamic data as HTML elements, you can use the `escape` operator
+
+```
+escape(<p>Hello, world!</p>)
 ```
 
 ### File inclusion
