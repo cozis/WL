@@ -263,3 +263,179 @@ include "file_A.wl"
 "myvar is accessible here: "
 myvar
 ```
+
+### External Symbols
+
+WL programs may reference external symbols (variables or functions) defined by the host program. These symbols behave like variables and procedures, except they don't need to be declared and their names start with `$`. For instance, you could have a `$platform` symbol return the name of the current platform (as in "Linux" or "Windows")
+
+```
+<p>The process is running on a \$platform machine</p>
+```
+
+## Embedding
+
+WL programs need to first be translated to bytecode, then evaluated in a virtua machine. The bytecode is completely standalone and can be cached.
+
+The API is quite involved as it tries not to take resource ownership from the caller. Ideally parent applications will have their own simplified wrapper over this API with caching and support for their own object model.
+
+### Compilation
+
+To compile a script, you need create a `WL_Compiler` object and add the source file to it
+
+```c
+int main(void)
+{
+    WL_String source = WL_STR("<p>Hello, world!</p>");
+
+    // Allocate some memory for the compiler
+    char memory[1<<16];
+    WL_Arena arena = { memory, sizeof(memory), 0 };
+
+    // Create the translation unit object
+    WL_Compiler *c = wl_compiler_init(&arena);
+    if (c == NULL) { /* error */ }
+
+    // Add a file to the unit
+    WL_AddResult res = wl_compiler_add(c, (WL_String) { NULL, 0 }, source);
+
+    if (res.type == WL_ADD_ERROR) {
+        fprintf(stderr, "Error: %s\n", wl_compiler_error(c).ptr);
+        return -1;
+    }
+
+    if (res.type != WL_ADD_LINK) {
+        fprintf(stderr, "Error: Unexpected compiler state\n");
+        return -1;
+    }
+
+    // Produce the template executable
+    WL_Program program;
+    int ret = wl_compiler_link(c, &program);
+    if (ret < 0) {
+        WL_String err = wl_compiler_error(c);
+        fprintf(stderr, "Error: %s\n", err.ptr);
+        return -1;
+    }
+
+    // Done!
+    // The WL_Program is just a string of bytes you can
+    // write to a file or store in a cache
+    return 0;
+}
+```
+
+If the initial script includes other files, the `wl_compiler_add` function will return an `WL_AddResult` of type `WL_ADD_AGAIN` and contain the path of the file that needs to be added next. The program will then need to call `wl_compiler_add` again with that file, until either an error occurs or `WL_ADD_LINK` is returned.
+
+### Evaluation
+
+Once a bytecode program has been obtained, this is how you set up the virtual machine to run it:
+
+```c
+int main(void)
+{
+    WL_Program program;
+    get_program_from_somewhere(&program);
+
+    WL_Runtime *rt = wl_runtime_init(&arena, program);
+    if (rt == NULL) {
+        printf("error\n");
+        return -1;
+    }
+
+    for (bool done = false; !done; ) {
+
+        WL_EvalResult res = wl_runtime_eval(rt);
+
+        switch (res.type) {
+
+            case WL_EVAL_NONE:
+            // Dummy value. This is never returned.
+            break;
+
+            case WL_EVAL_DONE:
+            // Evaluation complete
+            done = true;
+            break;
+
+            case WL_EVAL_ERROR:
+            // Runtime error occurred
+            printf("Error: %s\n", wl_runtime_error(rt).ptr);
+            return -1;
+
+            case WL_EVAL_OUTPUT:
+            // Output string available
+            fwrite(res.str.ptr, 1, res.str.len, output);
+            break;
+
+            case WL_EVAL_SYSVAR:
+            // External variable referenced
+            break;
+
+            case WL_EVAL_SYSCALL:
+            // Externa function called
+            break;
+        }
+    }
+
+    return 0;
+}
+```
+
+### External Symbols
+
+When during the evaluation of a program the `WL_EVAL_SYSVAR` result is returned, it means the program referenced an external symbol as a variable. The host program needs to push onto the stack of the VM the value relative to that symbol.
+
+#### External Variables
+
+Say your environment defined three external symbols "varA", "varB", "varC" with values 1, 2, 3. The way you would implement this is by doing:
+
+```c
+for (bool done = false; !done; ) {
+
+    WL_EvalResult res = wl_runtime_eval(rt);
+
+    switch (res.type) {
+
+        case WL_EVAL_NONE:
+        break;
+
+        case WL_EVAL_DONE:
+        done = true;
+        break;
+
+        case WL_EVAL_ERROR:
+        return -1;
+
+        case WL_EVAL_OUTPUT:
+        fwrite(res.str.ptr, 1, res.str.len, output);
+        break;
+
+        case WL_EVAL_SYSVAR:
+        
+        if (wl_streq(res.str, "varA", -1))
+            wl_push_s64(rt, 1);
+
+        if (wl_streq(res.str, "varB", -1))
+            wl_push_s64(rt, 2);
+
+        if (wl_streq(res.str, "varC", -1))
+            wl_push_s64(rt, 3);
+
+        break;
+
+        case WL_EVAL_SYSCALL:
+        // Externa function called
+        break;
+    }
+}
+```
+
+You first check the name of the referenced symbol in `res.str`, then use one of the `wl_push_*` functions to add the associated value.
+
+#### External Calls
+
+If the program performs call to an external function, the VM will return a result of type `WL_EVAL_SYSCALL`.
+
+The parent program can then get the number of arguments using the `wl_arg_count` function and `wl_push_arg` to set the top of the VM stack to the argument with the specified index. The argument can then be read using one of the `wl_pop_*` functions.
+
+The caller then needs to push the return value of the call on top of the stack using one of the `wl_push_*` functions.
