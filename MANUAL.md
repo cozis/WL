@@ -447,3 +447,79 @@ procedure factorial(n) {
 
 factorial(10)
 ```
+
+## HTML literals
+
+HTML literals are a type of expression, but they are complex enough that they warrant their own section.
+
+Generally speaking, HTML elements are valid expressions
+
+```
+<p>Hello, world!</p>
+```
+
+which evaluate to a string containing that HTML. The content of an element can be an arbitrary string or nested HTML elements.
+
+You can render variable values or any expression inside the HTML using the `\{}` notation:
+
+```
+let name = "Alice"
+
+<p>My name is \{name} and my favourite number is \{99 + 1}!</p>
+```
+
+You can also evaluate optional HTML elements using the `\if` construct
+
+```
+let a = 5
+
+<div>
+    \if a < 10:
+        <p>a is lower than 10</p>
+    else
+        <p>a isn't lower than 10</p>
+</div>
+```
+
+And iterate over elements of arrays and maps using `\for`
+
+```
+let items = [1, 2, 3]
+
+<ul>
+    \for item in items:
+        <li>\{item}</li>
+</ul>
+```
+
+In reality, the `\` character works by interrupting the HTML content string to evaluate any one WL statement. The output of that statement is then added to the HTML element's output.
+
+Since HTML elements are just expressions, you may assign them to variables
+
+```
+let items = [1, 2, 3]
+
+let list =
+    <ul>
+        \for item in items:
+            <li>\{item}</li>
+    </ul>
+
+list
+```
+
+Evaluating dynamic content within the opening tag is also allowed
+
+```
+let element_id = "mydiv"
+
+<div id="\{element_id}"></div>
+```
+
+You may omit the closing tag of any element by using this syntax:
+
+```
+<div />
+```
+
+Note that WL treats all elements the same way and does not apply different behavior based on the specific tag it's parsing. For instance most browsers will allor you to have a single open tag `<br>` with no closing one since `br` doesn't expect children elements. This would be incorrect in WL. You need to either write the element as `<br></br>` or as `<br />`.
