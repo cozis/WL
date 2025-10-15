@@ -1,0 +1,113 @@
+{
+  "name": "WL Enhanced",
+  "type": "dark",
+  "colors": {
+    "editor.background": "#1e1e1e",
+    "editor.foreground": "#d4d4d4"
+  },
+  "tokenColors": [
+    {
+      "name": "WL Control Keywords",
+      "scope": "keyword.control.wl",
+      "settings": {
+        "foreground": "#C586C0",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "WL Declaration Keywords (let, include, procedure)",
+      "scope": "keyword.other.wl",
+      "settings": {
+        "foreground": "#569CD6",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "WL Operator Keywords (len, escape)",
+      "scope": "keyword.operator.wl",
+      "settings": {
+        "foreground": "#4EC9B0"
+      }
+    },
+    {
+      "name": "WL HTML Tags",
+      "scope": "entity.name.tag.wl",
+      "settings": {
+        "foreground": "#4EC9B0"
+      }
+    },
+    {
+      "name": "WL HTML Tag Punctuation",
+      "scope": "punctuation.definition.tag.wl",
+      "settings": {
+        "foreground": "#808080"
+      }
+    },
+    {
+      "name": "WL Constants",
+      "scope": "constant.language.wl",
+      "settings": {
+        "foreground": "#569CD6"
+      }
+    },
+    {
+      "name": "WL Strings",
+      "scope": "string.quoted.double.wl, string.quoted.single.wl, string.quoted.double.html.wl, string.quoted.single.html.wl",
+      "settings": {
+        "foreground": "#CE9178"
+      }
+    },
+    {
+      "name": "WL Numbers",
+      "scope": "constant.numeric.wl",
+      "settings": {
+        "foreground": "#B5CEA8"
+      }
+    },
+    {
+      "name": "WL System Variables",
+      "scope": "variable.other.system.wl",
+      "settings": {
+        "foreground": "#9CDCFE",
+        "fontStyle": "italic"
+      }
+    },
+    {
+      "name": "WL Functions",
+      "scope": "entity.name.function.wl",
+      "settings": {
+        "foreground": "#DCDCAA"
+      }
+    },
+    {
+      "name": "WL Operators",
+      "scope": "keyword.operator.wl",
+      "settings": {
+        "foreground": "#D4D4D4"
+      }
+    },
+    {
+      "name": "WL Append Operator",
+      "scope": "keyword.operator.append.wl",
+      "settings": {
+        "foreground": "#C586C0",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "WL Comments",
+      "scope": "comment.block.html.wl",
+      "settings": {
+        "foreground": "#6A9955",
+        "fontStyle": "italic"
+      }
+    },
+    {
+      "name": "WL Embedded Expressions",
+      "scope": "meta.embedded.wl",
+      "settings": {
+        "background": "#2d2d30"
+      }
+    }
+  ]
+}

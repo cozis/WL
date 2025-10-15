@@ -451,3 +451,12 @@ The caller then needs to push the return value of the call on top of the stack u
 ## Building
 
 To build WL with your program, just drop the `wl.c` and `wl.h` files in your own source tree and compile them as any other file.
+
+## Syntax Highlighting
+
+We have a WL extension for vscode in `ide/vscode/` which offers basic syntax highlighting.
+
+To install it, drop it in your extension folder and reload vscode. The specific folder depends on your platform:
+* Windows: `%USERPROFILE%\.vscode\extensions`
+* macOS: `~/.vscode/extensions`
+* Linux: `~/.vscode/extensions`

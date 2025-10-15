@@ -1,0 +1,41 @@
+{
+  "name": "wl-language",
+  "displayName": "WL Language Support",
+  "description": "Syntax highlighting for WL templating language",
+  "version": "1.0.0",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "wl",
+        "aliases": [
+          "WL",
+          "wl"
+        ],
+        "extensions": [
+          ".wl"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "wl",
+        "scopeName": "source.wl",
+        "path": "./syntaxes/wl.tmLanguage.json"
+      }
+    ],
+    "themes": [
+      {
+        "label": "WL Enhanced",
+        "uiTheme": "vs-dark",
+        "path": "./themes/wl-theme.json"
+      }
+    ]
+  }
+}
