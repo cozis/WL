@@ -523,3 +523,38 @@ You may omit the closing tag of any element by using this syntax:
 ```
 
 Note that WL treats all elements the same way and does not apply different behavior based on the specific tag it's parsing. For instance most browsers will allor you to have a single open tag `<br>` with no closing one since `br` doesn't expect children elements. This would be incorrect in WL. You need to either write the element as `<br></br>` or as `<br />`.
+
+To avoid XSS attacks, you can use the `escape` operator to escape any HTML element. The following script
+
+```
+escape <a href="website.com">click me</a>
+```
+
+Will output
+
+```
+&lt;a href=&quot;website.com&quot;&gt;click me&lt;/a&gt;
+```
+
+## File Inclusion
+
+WL allows you to import all output, variables, routines from an external file to your script using the `include` statement.
+
+Say you have a file `other.wl` that contains the following text
+
+```
+
+"Some output here"
+
+let A = 5
+
+```
+
+Any other file may include `other.wl` to use its contents
+
+```
+import "other.wl"
+
+"The A variable is accessible here: "
+A
+```
