@@ -35,11 +35,11 @@ let navigator = <nav>
 </html>
 ```
 
-But really, WL is a full fledged scripting languages, so let's start from the beginning...
+But really, WL is a full-fledged scripting language, so let's start from the beginning...
 
 ### Expressions
 
-WL supports integer, floats, booleans, strings, arrays, and maps values
+WL supports integers, floats, booleans, strings, arrays, and map values
 
 ```
 100
@@ -51,7 +51,7 @@ false
 +{'name': 'Francesco', 'greeting': 'sup'}
 ```
 
-Evaluating expressions in the global scope will automatically write them to output. One thing you may not expect is that when arrays are printed out, their contents are just concatenated and printed out. This is useful for doing lazy string manipulation. Map on the other hand, are not considered as printable objects and will only output `<map>`.
+Evaluating expressions in the global scope will automatically write them to output. One thing you may not expect is that when arrays are printed out, their contents are just concatenated and printed out. This is useful for doing lazy string manipulation. Maps on the other hand, are not considered as printable objects and will only output `<map>`.
 
 Your usual arithmetic expressions in infix notation are supported:
 
@@ -99,7 +99,7 @@ A = 1
 A = "Hello"
 ```
 
-Variables are not bound to a type, so you can assign different type of values to them. You can output the variable's contents by just naming it
+Variables are not bound to a type, so you can assign different types of values to them. You can output the variable's contents by just naming it
 
 ```
 let name = "Alice"
@@ -126,7 +126,7 @@ You can also shadow variables by redeclaring them in nested scopes.
 
 ### Conditional branches and loops
 
-As every other procedural language you can use if-else branches
+Like every other procedural language you can use if-else branches
 
 ```
 if 1 < 2: {
@@ -150,7 +150,7 @@ for key in my_map: {
 }
 ```
 
-The iteration variable for arrays is the item itself, while the iteration variable for maps contains the current key. If you want to keep track of the interation index, you can declare a second iteration variable:
+The iteration variable for arrays is the item itself, while the iteration variable for maps contains the current key. If you want to keep track of the iteration index, you can declare a second iteration variable:
 
 ```
 for elem, index in ["A", "B", "C"]: {
@@ -212,7 +212,7 @@ HTML elements are also valid expressions
 <p>This is some text</p>
 ```
 
-You can have any text between HTML tags, with the exception of the backspace character `\` which is used to insert dynamic content into the element. You can use it to evaluate variables, if-else branches, loops, or anything really:
+You can have any text between HTML tags, with the exception of the backslash character `\` which is used to insert dynamic content into the element. You can use it to evaluate variables, if-else branches, loops, or anything really:
 
 ```
 let name = "Francesco"
@@ -245,7 +245,7 @@ let navigator =
 
 ### HTML escaping
 
-If you want to ascape any value to avoid rendering dynamic data as HTML elements, you can use the `escape` operator
+If you want to escape any value to avoid rendering dynamic data as HTML elements, you can use the `escape` operator
 
 ```
 escape(<p>Hello, world!</p>)
@@ -282,13 +282,13 @@ WL programs may reference external symbols (variables or functions) defined by t
 
 ## Embedding
 
-WL programs need to first be translated to bytecode, then evaluated in a virtua machine. The bytecode is completely standalone and can be cached.
+WL programs need to first be translated to bytecode, then evaluated in a virtual machine. The bytecode is completely standalone and can be cached.
 
 The API is quite involved as it tries not to take resource ownership from the caller. Ideally parent applications will have their own simplified wrapper over this API with caching and support for their own object model.
 
 ### Compilation
 
-To compile a script, you need create a `WL_Compiler` object and add the source file to it
+To compile a script, you need to create a `WL_Compiler` object and add the source file to it
 
 ```c
 int main(void)
@@ -380,7 +380,7 @@ int main(void)
             break;
 
             case WL_EVAL_SYSCALL:
-            // Externa function called
+            // External function called
             break;
         }
     }
@@ -432,7 +432,7 @@ for (bool done = false; !done; ) {
         break;
 
         case WL_EVAL_SYSCALL:
-        // Externa function called
+        // External function called
         break;
     }
 }
@@ -442,7 +442,7 @@ You first check the name of the referenced symbol in `res.str`, then use one of 
 
 #### External Calls
 
-If the program performs call to an external function, the VM will return a result of type `WL_EVAL_SYSCALL`.
+If the program performs a call to an external function, the VM will return a result of type `WL_EVAL_SYSCALL`.
 
 The parent program can then get the number of arguments using the `wl_arg_count` function and `wl_push_arg` to set the top of the VM stack to the argument with the specified index. The argument can then be read using one of the `wl_pop_*` functions.
 
