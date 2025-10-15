@@ -67,6 +67,10 @@ WL_Compiler *wl_compiler_init(WL_Arena *arena);
 //
 //   WL_ADD_LINK all sources were processed and
 //   the unit is ready for linking
+//
+// Note that the source of all files needs to
+// stay alive until the program is linked as the
+// compiler may keep references to it until then.
 WL_AddResult wl_compiler_add(WL_Compiler *compiler, WL_String path, WL_String content);
 
 // Links a compilation unit producing an executable.
