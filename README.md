@@ -33,10 +33,10 @@ let some_list =
         <title>\{escape title}</title>
     </head>
     <body>
-    \{navigator}
-    <article>
-        \{some_list}
-    </article>
+        \{navigator}
+        <article>
+            \{some_list}
+        </article>
     </body>
 </html>
 ```
