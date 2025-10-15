@@ -147,7 +147,7 @@ int main(void)
 
             case WL_EVAL_OUTPUT:
             // Output string available
-            fwrite(res.str.ptr, 1, res.str.len, output);
+            fwrite(res.str.ptr, 1, res.str.len, stdout);
             break;
 
             case WL_EVAL_SYSVAR:
