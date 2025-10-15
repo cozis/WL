@@ -765,12 +765,8 @@ static Node *parse_html(Parser *p)
 
         int off = s->cur;
 
-        bool quotes = false;
-        while (s->cur < s->len && s->src[s->cur] != '\\' && (quotes || (s->src[s->cur] != '/' && s->src[s->cur] != '>'))) {
-            if (s->src[s->cur] == '"')
-                quotes = !quotes;
+        while (s->cur < s->len && s->src[s->cur] != '\\' && (s->src[s->cur] != '/' && s->src[s->cur] != '>'))
             s->cur++;
-        }
 
         if (s->cur > off) {
 
@@ -1432,7 +1428,7 @@ static Node *parse_expr_inner(Parser *p, Node *left, int min_prec, int flags)
         Token t1 = next_token_or_newline(p);
         if (precedence(t1, flags) < min_prec) {
             p->s = saved;
-           break;
+            break;
         }
 
         Node *right = parse_atom(p);
