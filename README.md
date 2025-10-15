@@ -1,15 +1,6 @@
 # WL
 WL is a powerful and flexible, yet experimental scripting language for templating with first-class support for HTML.
 
-## Features
-1. **Zero dependencies** - It only uses pure C and the standard library
-2. **Single-file implementation** - Everything is inside `wl.c` and `wl.h`
-3. **HTML-first design** - Native HTML syntax with embedded scripting 
-4. **Complete scripting language** - Variables, functions, loops, conditional branches, arrays, maps. We've got it all!
-5. **Built-in XSS protection** - `escape()` function to sanitize dynamic HTML
-6. **No I/O or dynamic allocations** - Any I/O or memory management is left to the user
-7. **Include system** - Modular template composition over multiple files
-
 To learn about the language check out the `MANUAL.md` file. But for a sneak peek, here's an example:
 
 ```
@@ -40,6 +31,33 @@ let some_list =
     </body>
 </html>
 ```
+
+## Features
+
+1. **Zero dependencies** - It only uses pure C and the standard library
+2. **Single-file implementation** - Everything is inside `wl.c` and `wl.h`
+3. **HTML-first design** - Native HTML syntax with embedded scripting 
+4. **Complete scripting language** - Variables, functions, loops, conditional branches, arrays, maps. We've got it all!
+5. **Built-in XSS protection** - `escape()` function to sanitize dynamic HTML
+6. **No I/O or dynamic allocations** - Any I/O or memory management is left to the user
+7. **Include system** - Modular template composition over multiple files
+
+## Getting Started
+
+The WL interpreter is intended to be used as a library, but you can use the CLI to get a feel for the language. You can compile it by running:
+
+```
+make wl
+```
+
+This will generate the `wl` executable that you can call to evaluate `.wl` files.
+
+If you are using vscode, you can also install the language extension `ide/vscode/wl-language` by dropping it into your editor's extension folder and reloading it. The extension folder should be one of these:
+* Windows: `%USERPROFILE%\.vscode\extensions`
+* macOS: `~/.vscode/extensions`
+* Linux: `~/.vscode/extensions`
+
+If you're sold on the language and want to embed it in your application, just add the `wl.c` and `wl.h` files to your build and read the "Embedding" section.
 
 ## Embedding
 
@@ -208,16 +226,3 @@ If the program performs a call to an external function, the VM will return a res
 The parent program can then get the number of arguments using the `wl_arg_count` function and `wl_push_arg` to set the top of the VM stack to the argument with the specified index. The argument can then be read using one of the `wl_pop_*` functions.
 
 The caller then needs to push the return value of the call on top of the stack using one of the `wl_push_*` functions.
-
-## Building
-
-To build WL with your program, just drop the `wl.c` and `wl.h` files in your own source tree and compile them as any other file.
-
-## Syntax Highlighting
-
-We have a WL extension for vscode in `ide/vscode/` which offers basic syntax highlighting.
-
-To install it, drop it in your extension folder and reload vscode. The specific folder depends on your platform:
-* Windows: `%USERPROFILE%\.vscode\extensions`
-* macOS: `~/.vscode/extensions`
-* Linux: `~/.vscode/extensions`
