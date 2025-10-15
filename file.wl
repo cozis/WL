@@ -1,5 +1,7 @@
-let username = <script>alert('You\'ve been HACKED!')</script>
 
-<span>Hello, my name is \escape(username)</span>
+procedure page(title, lang)
+    <html lang="\{lang}">
+        \{title}
+    </html>
 
-
+page("Hello, world!", "it")

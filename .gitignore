@@ -3,6 +3,7 @@ coverage_html/
 test
 test.exe
 test_cov
+fuzz
 wl
 wl.exe
 wl_cov

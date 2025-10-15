@@ -1,0 +1,2 @@
+procedure P()
+    0

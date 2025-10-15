@@ -1,0 +1,2 @@
+procedure P(a)
+    a
