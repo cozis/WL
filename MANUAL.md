@@ -558,3 +558,11 @@ import "other.wl"
 "The A variable is accessible here: "
 A
 ```
+
+## External Symbols
+
+WL programs may reference external symbols (variables or functions) defined by the host program. These symbols behave like variables and procedures, except they don't need to be declared and their names start with `$`. For instance, you could have a `$platform` symbol return the name of the current platform (as in "Linux" or "Windows")
+
+```
+<p>The process is running on a \$platform machine</p>
+```
