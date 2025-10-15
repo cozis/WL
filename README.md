@@ -34,7 +34,7 @@ let some_list =
 
 ## Features
 
-1. Turing-complete language with first-class HTML support, routines, and an import system
+1. Turing-complete language with first-class HTML support, procedures, and an import system
 2. Easy to embed: The interpreter is a single C file with no dependencies that performs no allocations or I/O
 3. Built-in XSS protection: `escape()` operator to sanitize dynamic HTML
 
