@@ -66,6 +66,9 @@ The API is quite involved as it tries not to take resource ownership from the ca
 To compile a script, you need to create a `WL_Compiler` object and add the source file to it
 
 ```c
+#include <stdio.h>
+#include "wl.h"
+
 int main(void)
 {
     WL_String source = WL_STR("<p>Hello, world!</p>");
@@ -114,6 +117,9 @@ If the initial script includes other files, the `wl_compiler_add` function will 
 Once a bytecode program has been obtained, this is how you set up the virtual machine to run it:
 
 ```c
+#include <stdio.h>
+#include "wl.h"
+
 int main(void)
 {
     WL_Program program;
