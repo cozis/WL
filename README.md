@@ -34,13 +34,9 @@ let some_list =
 
 ## Features
 
-1. **Zero dependencies** - It only uses pure C and the standard library
-2. **Single-file implementation** - Everything is inside `wl.c` and `wl.h`
-3. **HTML-first design** - Native HTML syntax with embedded scripting 
-4. **Complete scripting language** - Variables, functions, loops, conditional branches, arrays, maps. We've got it all!
-5. **Built-in XSS protection** - `escape()` function to sanitize dynamic HTML
-6. **No I/O or dynamic allocations** - Any I/O or memory management is left to the user
-7. **Include system** - Modular template composition over multiple files
+1. Turing-complete language with first-class HTML support, routines, and an import system
+2. Easy to embed: The interpreter is a single C file with no dependencies that performs no allocations or I/O
+3. Built-in XSS protection: `escape()` operator to sanitize dynamic HTML
 
 ## Getting Started
 
