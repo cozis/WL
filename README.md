@@ -1,7 +1,7 @@
 # WL
 WL is a powerful and flexible, yet experimental scripting language for templating with first-class support for HTML.
 
-To learn about the language check out the `MANUAL.md` file. But for a sneak peek, here's an example:
+To learn about the language check out the `LANGUAGE.md` file. But for a sneak peek, here's an example:
 
 ```
 let title = "Title of my webpage"
