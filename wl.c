@@ -3019,7 +3019,7 @@ static void walk_node(Codegen *cg, Node *node, bool inside_html)
             walk_node(cg, node->proc_body, false);
             cg_write_opcode(cg, OPCODE_RET);
 
-            cg_patch_u8 (cg, off2, count_function_vars(cg));
+            cg_patch_u8 (cg, off2, cg->scopes[cg->num_scopes-1].max_vars);
             cg_patch_u32(cg, off0, cg_current_offset(cg));
 
             cg_pop_scope(cg);
@@ -4968,6 +4968,60 @@ static void value_print(Value v)
 
 static void step(WL_Runtime *rt)
 {
+#if 0
+    {
+        printf("vars = [\n");
+        int top = rt->vars;
+        for (int i = 0; i < rt->num_frames; i++) {
+            printf("  frame %d [ ", i);
+            for (int j = 0; j < rt->frames[i].varbase - top; j++) {
+                switch (value_type(rt->values[top + j + 1])) {
+                    case TYPE_NONE  : printf("none");   break;
+                    case TYPE_BOOL  : printf("bool");   break;
+                    case TYPE_INT   : printf("int");    break;
+                    case TYPE_FLOAT : printf("float");  break;
+                    case TYPE_STRING: printf("string"); break;
+                    case TYPE_ARRAY : printf("array");  break;
+                    case TYPE_MAP   : printf("map");    break;
+                    case TYPE_ERROR : printf("error");  break;
+                }
+                printf(" ");
+            }
+            printf("]\n");
+            top = rt->frames[i].varbase;
+        }
+        printf("]\n");
+
+        printf("stack = [\n");
+        for (int i = 0; i < rt->stack; i++) {
+            printf("  ");
+            switch (value_type(rt->values[i])) {
+                case TYPE_NONE  : printf("none");   break;
+                case TYPE_BOOL  : printf("bool");   break;
+                case TYPE_INT   : printf("int");    break;
+                case TYPE_FLOAT : printf("float");  break;
+                case TYPE_STRING: printf("string"); break;
+                case TYPE_ARRAY : printf("array");  break;
+                case TYPE_MAP   : printf("map");    break;
+                case TYPE_ERROR : printf("error");  break;
+            }
+            printf("\n");
+        }
+        printf("]\n");
+
+        char buf[1<<9];
+        Writer w = { .dst=buf, .cap=sizeof(buf), .len=0 };
+        write_instr(&w,
+            rt->code.ptr + rt->off,
+            rt->code.len - rt->off,
+            rt->data
+        );
+        printf("%d: %.*s", rt->off, w.len, w.dst);
+
+        printf("\n\n");
+    }
+#endif
+
     switch (rt_read_u8(rt)) {
 
         Type t;
