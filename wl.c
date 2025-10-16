@@ -761,12 +761,21 @@ static Node *parse_html(Parser *p)
 
     bool no_body = false;
     Scanner *s = &p->s;
-    for (;;) {
+    for (int quote = 0;;) {
 
         int off = s->cur;
 
-        while (s->cur < s->len && s->src[s->cur] != '\\' && (s->src[s->cur] != '/' && s->src[s->cur] != '>'))
+        while (s->cur < s->len && s->src[s->cur] != '\\' && (quote || (s->src[s->cur] != '/' && s->src[s->cur] != '>'))) {
+            if (quote) {
+                if (quote == s->src[s->cur])
+                    quote = 0;
+            } else {
+                char c = s->src[s->cur];
+                if (c == '"' || c == '\'')
+                    quote = c;
+            }
             s->cur++;
+        }
 
         if (s->cur > off) {
 
