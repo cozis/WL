@@ -13,7 +13,7 @@ let navigator =
         <a href="/about">About</a>
     </nav>
 
-let some_list = 
+let some_list =
     <ul>
     \for item in items:
         <li>\{escape item}</li>
@@ -54,6 +54,10 @@ If you are using vscode, you can also install the language extension `ide/vscode
 * Linux: `~/.vscode/extensions`
 
 If you're sold on the language and want to embed it in your application, just add the `wl.c` and `wl.h` files to your build and read the "Embedding" section.
+
+If you get stuck, have questions, or want to contribute, feel free to open an issue or join my discord server [here](https://discord.gg/XhVH3Dzn).
+
+Happy templatin'!
 
 ## Embedding
 
@@ -200,7 +204,7 @@ for (bool done = false; !done; ) {
         break;
 
         case WL_EVAL_SYSVAR:
-        
+
         if (wl_streq(res.str, "varA", -1))
             wl_push_s64(rt, 1);
 
