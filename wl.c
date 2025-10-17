@@ -784,7 +784,8 @@ static Node *parse_html(Parser *p)
         }
 
         if (s->cur == s->len) {
-            ASSERT(0); // TODO
+            parser_report(p, "Unexpected end of source inside an HTML element");
+            return NULL;
         }
         s->cur++;
 
@@ -795,7 +796,8 @@ static Node *parse_html(Parser *p)
             while (s->cur < s->len && is_space(s->src[s->cur]))
                 s->cur++;
             if (s->cur == s->len || s->src[s->cur] != '>') {
-                ASSERT(0); // TODO
+                parser_report(p, "Missing '>' after '/' inside closing HTML tag");
+                return NULL;
             }
             s->cur++;
             no_body = true;
@@ -839,7 +841,8 @@ static Node *parse_html(Parser *p)
             }
 
             if (s->cur == s->len) {
-                ASSERT(0); // TODO
+                parser_report(p, "Unexpected end of source inside an HTML element");
+                return NULL;
             }
             s->cur++;
 
@@ -851,17 +854,25 @@ static Node *parse_html(Parser *p)
 
                     t = next_token(p);
                     if (t.type != TOKEN_IDENT) {
-                        ASSERT(0); // TODO
+                        parser_report(p, "Unexpected token where a tag name was expected inside closing HTML tag");
+                        return NULL;
                     }
                     String closing_tagname = t.sval;
 
                     if (!streq(closing_tagname, tagname)) {
-                        ASSERT(0); // TODO
+                        parser_report(p, "Closing tag name '%.*s' doesn't match the opening tag '%.*s'",
+                            closing_tagname.len,
+                            closing_tagname.ptr,
+                            tagname.len,
+                            tagname.ptr
+                        );
+                        return NULL;
                     }
 
                     t = next_token(p);
                     if (t.type != TOKEN_OPER_GRT) {
-                        ASSERT(0);
+                        parser_report(p, "Missing '>' after closing HTML tag name");
+                        return NULL;
                     }
 
                     break;
@@ -2574,9 +2585,6 @@ static void cg_pop_scope(Codegen *cg)
 
         call->next = cg->free_list_calls;
         cg->free_list_calls = call;
-
-        // TODO: remove
-        ASSERT(cg->scopes[cg->num_scopes-1].calls == NULL || (cg->scopes[cg->num_scopes-1].calls - cg->calls >= 0 && cg->scopes[cg->num_scopes-1].calls - cg->calls < MAX_UNPATCHED_CALLS));
     }
 
     cg->num_syms = scope->idx_syms;
@@ -3606,7 +3614,8 @@ WL_AddResult wl_compiler_add(WL_Compiler *compiler, WL_String path, WL_String co
 
                 char *dst = alloc(compiler->arena, parent.len + include->include_path.len + 1, 1);
                 if (dst == NULL) {
-                    // TODO
+                    // TODO: report error
+                    return (WL_AddResult) { .type=WL_ADD_ERROR };
                 }
 
                 memcpy(dst,
@@ -3650,7 +3659,8 @@ WL_AddResult wl_compiler_add(WL_Compiler *compiler, WL_String path, WL_String co
             if (include->include_root == NULL) {
 
                 if (compiler->num_files == FILE_LIMIT) {
-                    ASSERT(0); // TODO
+                    // TODO: report error
+                    return (WL_AddResult) { .type=WL_ADD_ERROR };
                 }
 
                 compiler->waiting_file = include->include_path;
