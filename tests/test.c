@@ -3,7 +3,7 @@
 #include <string.h>
 #include <assert.h>
 #include <stdbool.h>
-#include "wl.h"
+#include "../wl.h"
 
 #define COUNT(X) (int) (sizeof(X) / sizeof((X)[0]))
 

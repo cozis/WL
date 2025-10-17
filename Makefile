@@ -9,8 +9,8 @@ all: wl
 wl: wl.c wl.h main.c
 	gcc main.c wl.c -o wl   -g3 -O0
 
-test: wl.c wl.h test.c
-	gcc test.c wl.c -o test -g3 -O0
+test: wl.c wl.h tests/test.c
+	gcc tests/test.c wl.c -o test -g3 -O0
 
 coverage:
 	gcc main.c wl.c -o wl_cov   -g3 -O0 --coverage -fprofile-arcs -ftest-coverage
@@ -22,8 +22,8 @@ coverage_report:
 	lcov --remove coverage.info '/usr/*' --output-file coverage_filtered.info
 	genhtml coverage_filtered.info --output-directory coverage_html --title "WL Template Engine Coverage"
 
-fuzz: fuzz.c wl.c wl.h
-	$(AFL_CC) fuzz.c wl.c -o fuzz \
+fuzz: tests/fuzz.c wl.c wl.h
+	$(AFL_CC) tests/fuzz.c wl.c -o fuzz \
 		-g -O3 -Wall \
 		-fsanitize=address,undefined \
 		-fno-omit-frame-pointer

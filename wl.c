@@ -197,14 +197,8 @@ static void write_raw_mem(Writer *w, void *ptr, int len)
 }
 
 static void write_raw_u8 (Writer *w, uint8_t  x) { write_raw_mem(w, &x, SIZEOF(x)); }
-//static void write_raw_u16(Writer *w, uint16_t x) { write_raw_mem(w, &x, SIZEOF(x)); }
 static void write_raw_u32(Writer *w, uint32_t x) { write_raw_mem(w, &x, SIZEOF(x)); }
-//static void write_raw_u64(Writer *w, uint64_t x) { write_raw_mem(w, &x, SIZEOF(x)); }
-//static void write_raw_s8 (Writer *w, int8_t   x) { write_raw_mem(w, &x, SIZEOF(x)); }
-//static void write_raw_s16(Writer *w, int16_t  x) { write_raw_mem(w, &x, SIZEOF(x)); }
-//static void write_raw_s32(Writer *w, int32_t  x) { write_raw_mem(w, &x, SIZEOF(x)); }
 static void write_raw_s64(Writer *w, int64_t  x) { write_raw_mem(w, &x, SIZEOF(x)); }
-//static void write_raw_f32(Writer *w, float    x) { write_raw_mem(w, &x, SIZEOF(x)); }
 static void write_raw_f64(Writer *w, double   x) { write_raw_mem(w, &x, SIZEOF(x)); }
 
 static void write_text(Writer *w, String str)
@@ -426,47 +420,47 @@ static void write_token(Writer *w, Token token)
 {
     switch (token.type) {
 
-        default                 : write_text(w, S("???"));       break;
-        case TOKEN_END          : write_text(w, S("<EOF>"));     break;
-        case TOKEN_ERROR        : write_text(w, S("<ERROR>"));   break;
-        case TOKEN_IDENT        : write_text(w, token.sval);     break;
-        case TOKEN_KWORD_IF     : write_text(w, S("if"));        break;
-        case TOKEN_KWORD_ELSE   : write_text(w, S("else"));      break;
-        case TOKEN_KWORD_WHILE  : write_text(w, S("while"));     break;
-        case TOKEN_KWORD_FOR    : write_text(w, S("for"));       break;
-        case TOKEN_KWORD_IN     : write_text(w, S("in"));        break;
+        default                   : write_text(w, S("???"));       break;
+        case TOKEN_END            : write_text(w, S("<EOF>"));     break;
+        case TOKEN_ERROR          : write_text(w, S("<ERROR>"));   break;
+        case TOKEN_IDENT          : write_text(w, token.sval);     break;
+        case TOKEN_KWORD_IF       : write_text(w, S("if"));        break;
+        case TOKEN_KWORD_ELSE     : write_text(w, S("else"));      break;
+        case TOKEN_KWORD_WHILE    : write_text(w, S("while"));     break;
+        case TOKEN_KWORD_FOR      : write_text(w, S("for"));       break;
+        case TOKEN_KWORD_IN       : write_text(w, S("in"));        break;
         case TOKEN_KWORD_PROCEDURE: write_text(w, S("procedure")); break;
-        case TOKEN_KWORD_LET    : write_text(w, S("let"));       break;
-        case TOKEN_KWORD_NONE   : write_text(w, S("none"));      break;
-        case TOKEN_KWORD_TRUE   : write_text(w, S("true"));      break;
-        case TOKEN_KWORD_FALSE  : write_text(w, S("false"));     break;
-        case TOKEN_KWORD_INCLUDE: write_text(w, S("include"));   break;
-        case TOKEN_KWORD_LEN    : write_text(w, S("len"));       break;
-        case TOKEN_KWORD_ESCAPE: write_text(w, S("escape")); break;
-        case TOKEN_VALUE_FLOAT  : write_text_f64(w, token.fval); break;
-        case TOKEN_VALUE_INT    : write_text_s64(w, token.ival); break;
-        case TOKEN_OPER_ASS     : write_text(w, S("="));         break;
-        case TOKEN_OPER_EQL     : write_text(w, S("=="));        break;
-        case TOKEN_OPER_NQL     : write_text(w, S("!="));        break;
-        case TOKEN_OPER_LSS     : write_text(w, S("<"));         break;
-        case TOKEN_OPER_GRT     : write_text(w, S(">"));         break;
-        case TOKEN_OPER_ADD     : write_text(w, S("+"));         break;
-        case TOKEN_OPER_SUB     : write_text(w, S("-"));         break;
-        case TOKEN_OPER_MUL     : write_text(w, S("*"));         break;
-        case TOKEN_OPER_DIV     : write_text(w, S("/"));         break;
-        case TOKEN_OPER_MOD     : write_text(w, S("%"));         break;
-        case TOKEN_OPER_SHOVEL  : write_text(w, S("<<"));        break;
-        case TOKEN_PAREN_OPEN   : write_text(w, S("("));         break;
-        case TOKEN_PAREN_CLOSE  : write_text(w, S(")"));         break;
-        case TOKEN_BRACKET_OPEN : write_text(w, S("["));         break;
-        case TOKEN_BRACKET_CLOSE: write_text(w, S("]"));         break;
-        case TOKEN_CURLY_OPEN   : write_text(w, S("{"));         break;
-        case TOKEN_CURLY_CLOSE  : write_text(w, S("}"));         break;
-        case TOKEN_DOT          : write_text(w, S("."));         break;
-        case TOKEN_COMMA        : write_text(w, S(","));         break;
-        case TOKEN_COLON        : write_text(w, S(":"));         break;
-        case TOKEN_DOLLAR       : write_text(w, S("$"));         break;
-        case TOKEN_NEWLINE      : write_text(w, S("\\n"));       break;
+        case TOKEN_KWORD_LET      : write_text(w, S("let"));       break;
+        case TOKEN_KWORD_NONE     : write_text(w, S("none"));      break;
+        case TOKEN_KWORD_TRUE     : write_text(w, S("true"));      break;
+        case TOKEN_KWORD_FALSE    : write_text(w, S("false"));     break;
+        case TOKEN_KWORD_INCLUDE  : write_text(w, S("include"));   break;
+        case TOKEN_KWORD_LEN      : write_text(w, S("len"));       break;
+        case TOKEN_KWORD_ESCAPE   : write_text(w, S("escape"));    break;
+        case TOKEN_VALUE_FLOAT    : write_text_f64(w, token.fval); break;
+        case TOKEN_VALUE_INT      : write_text_s64(w, token.ival); break;
+        case TOKEN_OPER_ASS       : write_text(w, S("="));         break;
+        case TOKEN_OPER_EQL       : write_text(w, S("=="));        break;
+        case TOKEN_OPER_NQL       : write_text(w, S("!="));        break;
+        case TOKEN_OPER_LSS       : write_text(w, S("<"));         break;
+        case TOKEN_OPER_GRT       : write_text(w, S(">"));         break;
+        case TOKEN_OPER_ADD       : write_text(w, S("+"));         break;
+        case TOKEN_OPER_SUB       : write_text(w, S("-"));         break;
+        case TOKEN_OPER_MUL       : write_text(w, S("*"));         break;
+        case TOKEN_OPER_DIV       : write_text(w, S("/"));         break;
+        case TOKEN_OPER_MOD       : write_text(w, S("%"));         break;
+        case TOKEN_OPER_SHOVEL    : write_text(w, S("<<"));        break;
+        case TOKEN_PAREN_OPEN     : write_text(w, S("("));         break;
+        case TOKEN_PAREN_CLOSE    : write_text(w, S(")"));         break;
+        case TOKEN_BRACKET_OPEN   : write_text(w, S("["));         break;
+        case TOKEN_BRACKET_CLOSE  : write_text(w, S("]"));         break;
+        case TOKEN_CURLY_OPEN     : write_text(w, S("{"));         break;
+        case TOKEN_CURLY_CLOSE    : write_text(w, S("}"));         break;
+        case TOKEN_DOT            : write_text(w, S("."));         break;
+        case TOKEN_COMMA          : write_text(w, S(","));         break;
+        case TOKEN_COLON          : write_text(w, S(":"));         break;
+        case TOKEN_DOLLAR         : write_text(w, S("$"));         break;
+        case TOKEN_NEWLINE        : write_text(w, S("\\n"));       break;
 
         case TOKEN_VALUE_STR:
         write_text(w, S("\""));
@@ -547,19 +541,19 @@ static Token next_token(Parser *p)
             p->s.cur - start
         };
 
-        if (streq(kword, S("if")))      return (Token) { .type=TOKEN_KWORD_IF      };
-        if (streq(kword, S("else")))    return (Token) { .type=TOKEN_KWORD_ELSE    };
-        if (streq(kword, S("while")))   return (Token) { .type=TOKEN_KWORD_WHILE   };
-        if (streq(kword, S("for")))     return (Token) { .type=TOKEN_KWORD_FOR     };
-        if (streq(kword, S("in")))      return (Token) { .type=TOKEN_KWORD_IN      };
+        if (streq(kword, S("if")))        return (Token) { .type=TOKEN_KWORD_IF        };
+        if (streq(kword, S("else")))      return (Token) { .type=TOKEN_KWORD_ELSE      };
+        if (streq(kword, S("while")))     return (Token) { .type=TOKEN_KWORD_WHILE     };
+        if (streq(kword, S("for")))       return (Token) { .type=TOKEN_KWORD_FOR       };
+        if (streq(kword, S("in")))        return (Token) { .type=TOKEN_KWORD_IN        };
         if (streq(kword, S("procedure"))) return (Token) { .type=TOKEN_KWORD_PROCEDURE };
-        if (streq(kword, S("let")))     return (Token) { .type=TOKEN_KWORD_LET     };
-        if (streq(kword, S("none")))    return (Token) { .type=TOKEN_KWORD_NONE    };
-        if (streq(kword, S("true")))    return (Token) { .type=TOKEN_KWORD_TRUE    };
-        if (streq(kword, S("false")))   return (Token) { .type=TOKEN_KWORD_FALSE   };
-        if (streq(kword, S("include"))) return (Token) { .type=TOKEN_KWORD_INCLUDE };
-        if (streq(kword, S("len")))     return (Token) { .type=TOKEN_KWORD_LEN     };
-        if (streq(kword, S("escape"))) return (Token) { .type=TOKEN_KWORD_ESCAPE };
+        if (streq(kword, S("let")))       return (Token) { .type=TOKEN_KWORD_LET       };
+        if (streq(kword, S("none")))      return (Token) { .type=TOKEN_KWORD_NONE      };
+        if (streq(kword, S("true")))      return (Token) { .type=TOKEN_KWORD_TRUE      };
+        if (streq(kword, S("false")))     return (Token) { .type=TOKEN_KWORD_FALSE     };
+        if (streq(kword, S("include")))   return (Token) { .type=TOKEN_KWORD_INCLUDE   };
+        if (streq(kword, S("len")))       return (Token) { .type=TOKEN_KWORD_LEN       };
+        if (streq(kword, S("escape")))    return (Token) { .type=TOKEN_KWORD_ESCAPE    };
 
         return (Token) { .type=TOKEN_IDENT, .sval=kword };
     }
@@ -695,28 +689,27 @@ static Token next_token(Parser *p)
         return (Token) { .type=TOKEN_VALUE_STR, .sval=(String) { .ptr=buf, .len=len } };
     }
 
-    if (consume_str(&p->s, S("<<"))) return (Token) { .type=TOKEN_OPER_SHOVEL };
-    if (consume_str(&p->s, S("=="))) return (Token) { .type=TOKEN_OPER_EQL };
-    if (consume_str(&p->s, S("!="))) return (Token) { .type=TOKEN_OPER_NQL };
-    if (consume_str(&p->s, S("<")))  return (Token) { .type=TOKEN_OPER_LSS };
-    if (consume_str(&p->s, S(">")))  return (Token) { .type=TOKEN_OPER_GRT };
-    if (consume_str(&p->s, S("+")))  return (Token) { .type=TOKEN_OPER_ADD };
-    if (consume_str(&p->s, S("-")))  return (Token) { .type=TOKEN_OPER_SUB };
-    if (consume_str(&p->s, S("*")))  return (Token) { .type=TOKEN_OPER_MUL };
-    if (consume_str(&p->s, S("/")))  return (Token) { .type=TOKEN_OPER_DIV };
-    if (consume_str(&p->s, S("%")))  return (Token) { .type=TOKEN_OPER_MOD };
-    if (consume_str(&p->s, S("=")))  return (Token) { .type=TOKEN_OPER_ASS };
-
-    if (consume_str(&p->s, S("(")))  return (Token) { .type=TOKEN_PAREN_OPEN };
-    if (consume_str(&p->s, S(")")))  return (Token) { .type=TOKEN_PAREN_CLOSE };
-    if (consume_str(&p->s, S("[")))  return (Token) { .type=TOKEN_BRACKET_OPEN };
+    if (consume_str(&p->s, S("<<"))) return (Token) { .type=TOKEN_OPER_SHOVEL   };
+    if (consume_str(&p->s, S("=="))) return (Token) { .type=TOKEN_OPER_EQL      };
+    if (consume_str(&p->s, S("!="))) return (Token) { .type=TOKEN_OPER_NQL      };
+    if (consume_str(&p->s, S("<")))  return (Token) { .type=TOKEN_OPER_LSS      };
+    if (consume_str(&p->s, S(">")))  return (Token) { .type=TOKEN_OPER_GRT      };
+    if (consume_str(&p->s, S("+")))  return (Token) { .type=TOKEN_OPER_ADD      };
+    if (consume_str(&p->s, S("-")))  return (Token) { .type=TOKEN_OPER_SUB      };
+    if (consume_str(&p->s, S("*")))  return (Token) { .type=TOKEN_OPER_MUL      };
+    if (consume_str(&p->s, S("/")))  return (Token) { .type=TOKEN_OPER_DIV      };
+    if (consume_str(&p->s, S("%")))  return (Token) { .type=TOKEN_OPER_MOD      };
+    if (consume_str(&p->s, S("=")))  return (Token) { .type=TOKEN_OPER_ASS      };
+    if (consume_str(&p->s, S("(")))  return (Token) { .type=TOKEN_PAREN_OPEN    };
+    if (consume_str(&p->s, S(")")))  return (Token) { .type=TOKEN_PAREN_CLOSE   };
+    if (consume_str(&p->s, S("[")))  return (Token) { .type=TOKEN_BRACKET_OPEN  };
     if (consume_str(&p->s, S("]")))  return (Token) { .type=TOKEN_BRACKET_CLOSE };
-    if (consume_str(&p->s, S("{")))  return (Token) { .type=TOKEN_CURLY_OPEN };
-    if (consume_str(&p->s, S("}")))  return (Token) { .type=TOKEN_CURLY_CLOSE };
-    if (consume_str(&p->s, S(".")))  return (Token) { .type=TOKEN_DOT };
-    if (consume_str(&p->s, S(",")))  return (Token) { .type=TOKEN_COMMA };
-    if (consume_str(&p->s, S(":")))  return (Token) { .type=TOKEN_COLON };
-    if (consume_str(&p->s, S("$")))  return (Token) { .type=TOKEN_DOLLAR };
+    if (consume_str(&p->s, S("{")))  return (Token) { .type=TOKEN_CURLY_OPEN    };
+    if (consume_str(&p->s, S("}")))  return (Token) { .type=TOKEN_CURLY_CLOSE   };
+    if (consume_str(&p->s, S(".")))  return (Token) { .type=TOKEN_DOT           };
+    if (consume_str(&p->s, S(",")))  return (Token) { .type=TOKEN_COMMA         };
+    if (consume_str(&p->s, S(":")))  return (Token) { .type=TOKEN_COLON         };
+    if (consume_str(&p->s, S("$")))  return (Token) { .type=TOKEN_DOLLAR        };
 
     parser_report(p, "Invalid character '%c'", c);
     return (Token) { .type=TOKEN_ERROR };
@@ -977,7 +970,7 @@ static Node *parse_map(Parser *p)
             saved = p->s;
             t = next_token(p);
             if (t.type == TOKEN_IDENT) {
-   
+
                 key = alloc_node(p);
                 if (key == NULL)
                     return NULL;
@@ -2568,7 +2561,7 @@ static void cg_pop_scope(Codegen *cg)
                     return;
                 }
             call->next = parent_scope->calls;
-            parent_scope->calls = call; 
+            parent_scope->calls = call;
             continue;
         }
 
@@ -2656,9 +2649,6 @@ static void walk_node(Codegen *cg, Node *node, bool inside_html);
 
 static void walk_expr_node(Codegen *cg, Node *node, bool one)
 {
-    // TODO: remove
-    ASSERT(cg->scopes[cg->num_scopes-1].calls == NULL || (cg->scopes[cg->num_scopes-1].calls - cg->calls >= 0 && cg->scopes[cg->num_scopes-1].calls - cg->calls < MAX_UNPATCHED_CALLS));
-
     switch (node->type) {
 
         case NODE_NESTED:
@@ -2942,7 +2932,7 @@ static void walk_expr_node(Codegen *cg, Node *node, bool one)
 
             Node *proc = node->left;
             if (proc->type == NODE_VALUE_VAR) {
-                
+
                 cg_write_opcode(cg, OPCODE_CALL);
                 cg_write_u8(cg, count);
                 int p = cg_write_u32(cg, 0);
@@ -2968,9 +2958,6 @@ static void walk_expr_node(Codegen *cg, Node *node, bool one)
 
 static void walk_node(Codegen *cg, Node *node, bool inside_html)
 {
-    // TODO: remove
-    ASSERT(cg->scopes[cg->num_scopes-1].calls == NULL || (cg->scopes[cg->num_scopes-1].calls - cg->calls >= 0 && cg->scopes[cg->num_scopes-1].calls - cg->calls < MAX_UNPATCHED_CALLS));
-
     switch (node->type) {
 
         case NODE_GLOBAL:
@@ -3666,8 +3653,6 @@ WL_AddResult wl_compiler_add(WL_Compiler *compiler, WL_String path, WL_String co
                     ASSERT(0); // TODO
                 }
 
-                // TODO: Make the path relative to the compiled file
-
                 compiler->waiting_file = include->include_path;
                 return (WL_AddResult) { .type=WL_ADD_AGAIN, .path={ include->include_path.ptr, include->include_path.len } };
             }
@@ -3841,45 +3826,6 @@ static String value_to_str(Value v)
     return (String) { p->data, p->len };
 }
 
-/*
-
-2 bits -> 2^2 = 4
-
-00000   0    .
-00001   1    .
-00010   2    .
-00011   3    .
-00100   4    .
-00101   5    .
-00110   6    .
-00111   7    .
-01000   8
-01001   9
-01010   10
-01011   11
-01100   12
-01101   13
-01110   14
-01111   15
-10000  -16
-10001  -15
-10010  -14
-10011  -13
-10100  -12
-10101  -11
-10110  -10
-10111  -9
-11000  -8    .
-11001  -7    .
-11010  -6    .
-11011  -5    .
-11100  -4    .
-11101  -3    .
-11110  -2    .
-11111  -1    .
-
-*/
-
 static Value value_from_s64(int64_t x, WL_Arena *arena, Error *err)
 {
     Value v = (Value) x;
@@ -4008,7 +3954,7 @@ static Value *aggregate_select(AggregateValue *agg, Value key)
         }
 
         return NULL;
-    
+
     } else {
 
         ASSERT(agg->type == TYPE_ARRAY);
@@ -4260,7 +4206,7 @@ static Value value_neg(Value v, WL_Arena *arena, Error *err)
     Type t = value_type(v);
     if (t == TYPE_INT)
         return value_from_s64(-value_to_s64(v), arena, err); // TODO: overflow
-    
+
     if (t == TYPE_FLOAT)
         return value_from_f64(-value_to_f64(v), arena, err);
 
@@ -5906,7 +5852,7 @@ void wl_runtime_dump(WL_Runtime *rt)
 {
     for (int i = 0; i < rt->num_frames; i++) {
         printf("=== frame %d ===\n", i);
-        
+
         Frame *frame = &rt->frames[i];
 
         int num_vars;
