@@ -553,7 +553,7 @@ let A = 5
 Any other file may include `other.wl` to use its contents
 
 ```
-import "other.wl"
+include "other.wl"
 
 "The A variable is accessible here: "
 A
